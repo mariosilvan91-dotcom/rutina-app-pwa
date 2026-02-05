@@ -217,7 +217,8 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="min-h-screen p-4 pb-24">
+      <div className="min-h-screen">
+    <div className="mx-auto w-full max-w-md px-4 pb-24 pt-4">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-xl font-bold">Histórico</h1>
         <div className="flex gap-2 rounded-xl bg-gray-100 p-1">
