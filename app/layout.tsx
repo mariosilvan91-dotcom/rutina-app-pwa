@@ -18,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="">Hoy</Link>
             <Link href="/historia">Histórico</Link>
             <Link href="/plan-dia">Plan día</Link>
+            <Link href="/plan-deporte">Plan deporte</Link>
             <Link href="/alimentos">Alimentos</Link>
             <Link href="/platos">Platos</Link>
             <Link href="/ajustes">Ajustes</Link>
