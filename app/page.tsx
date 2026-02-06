@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
 import { todayISO } from "@/lib/date";
@@ -18,6 +18,32 @@ type TodayPlan = {
   merienda_plato: string | null;
   cena_plato: string | null;
 };
+
+type PlatoRow = {
+  tipo_dia: "entreno" | "descanso";
+  comida: "desayuno" | "comida" | "merienda" | "cena";
+  plato: string;
+};
+
+function ymd(d: Date) {
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function startOfWeekMonday(d: Date) {
+  const x = new Date(d);
+  const day = (x.getDay() + 6) % 7; // lunes=0
+  x.setDate(x.getDate() - day);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function pickOne<T>(arr: T[]): T | null {
+  if (!arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 export default function HomePage() {
   return (
@@ -39,14 +65,14 @@ function HoyInner() {
 
   const [status, setStatus] = useState<string>("");
 
-  // ✅ Plan de comidas del día (de week_plan_days)
+  // ✅ Plan de comidas del día (week_plan_days)
   const [todayPlan, setTodayPlan] = useState<TodayPlan | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
   }, []);
 
-  // Load from local first
+  // Load from local first (habits)
   useEffect(() => {
     if (!userId) return;
     (async () => {
@@ -79,7 +105,7 @@ function HoyInner() {
     })();
   }, [userId, day]);
 
-  // ✅ Cargar plan semanal del día (si existe)
+  // ✅ Cargar plan del día (si existe)
   useEffect(() => {
     if (!userId) return;
     (async () => {
@@ -104,6 +130,88 @@ function HoyInner() {
     })();
   }, [userId, day]);
 
+  const weekStartISO = useMemo(() => ymd(startOfWeekMonday(new Date(day))), [day]);
+
+  async function ensureTodayMealsIfDietOk() {
+    if (!userId) return;
+
+    // 1) ¿Ya hay plan hoy?
+    const existing = await supabase
+      .from("week_plan_days")
+      .select("desayuno_plato,comida_plato,merienda_plato,cena_plato,tipo_dia")
+      .eq("user_id", userId)
+      .eq("day", day)
+      .maybeSingle();
+
+    if (!existing.error && existing.data) {
+      const ex: any = existing.data;
+      const hasAny =
+        !!ex.desayuno_plato || !!ex.comida_plato || !!ex.merienda_plato || !!ex.cena_plato;
+
+      // Si ya hay algo, lo ponemos en UI y listo
+      if (hasAny) {
+        setTodayPlan({
+          tipo_dia: ex.tipo_dia ?? null,
+          desayuno_plato: ex.desayuno_plato ?? null,
+          comida_plato: ex.comida_plato ?? null,
+          merienda_plato: ex.merienda_plato ?? null,
+          cena_plato: ex.cena_plato ?? null,
+        });
+        return;
+      }
+    }
+
+    // 2) No existe o está vacío → autogenerar desde stg_platos
+    const tipo: "entreno" | "descanso" = gym === true ? "entreno" : "descanso";
+
+    const { data: platosData, error: pErr } = await supabase
+      .from("stg_platos")
+      .select("tipo_dia,comida,plato")
+      .eq("tipo_dia", tipo);
+
+    if (pErr) {
+      // No rompemos el guardado de hábitos
+      setStatus((s) => (s ? `${s} · ` : "") + `No pude autogenerar comidas: ${pErr.message}`);
+      return;
+    }
+
+    const platos = (platosData ?? []) as PlatoRow[];
+
+    const by = (c: PlatoRow["comida"]) => platos.filter((x) => x.comida === c);
+
+    const desayuno = pickOne(by("desayuno"))?.plato ?? null;
+    const comida = pickOne(by("comida"))?.plato ?? null;
+    const merienda = pickOne(by("merienda"))?.plato ?? null;
+    const cena = pickOne(by("cena"))?.plato ?? null;
+
+    const payload = {
+      user_id: userId,
+      week_start: weekStartISO,
+      day,
+      tipo_dia: tipo,
+      desayuno_plato: desayuno,
+      comida_plato: comida,
+      merienda_plato: merienda,
+      cena_plato: cena,
+      updated_at: new Date().toISOString(),
+    };
+
+    const up = await supabase.from("week_plan_days").upsert(payload, { onConflict: "user_id,day" });
+
+    if (up.error) {
+      setStatus((s) => (s ? `${s} · ` : "") + `No pude guardar el plan de comidas: ${up.error.message}`);
+      return;
+    }
+
+    setTodayPlan({
+      tipo_dia: tipo,
+      desayuno_plato: desayuno,
+      comida_plato: comida,
+      merienda_plato: merienda,
+      cena_plato: cena,
+    });
+  }
+
   async function save() {
     if (!userId) return;
 
@@ -121,6 +229,11 @@ function HoyInner() {
 
     await db.day_logs.put(log);
     await queueUpsertDayLog(log);
+
+    // ✅ Si has marcado Dieta OK, autocompleta plan de comidas de HOY (si falta)
+    if (dietOk === true) {
+      await ensureTodayMealsIfDietOk();
+    }
 
     const res = await syncQueue();
     setStatus(
@@ -152,7 +265,7 @@ function HoyInner() {
         </div>
       </div>
 
-      {/* ✅ HOY TOCA (comidas del plan semanal) */}
+      {/* ✅ HOY TOCA */}
       {todayPlan ? (
         <div className="card" style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>
@@ -192,12 +305,12 @@ function HoyInner() {
         <div className="card" style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>🍽️ Hoy toca</div>
           <div className="small">
-            No hay plan guardado para hoy. Ve a “Plan día” y guarda la semana.
+            No hay plan guardado para hoy. Si marcas “Dieta OK = Sí” al guardar, también lo autogenero.
           </div>
         </div>
       )}
 
-      {/* FORMULARIO (MÓVIL: COLUMNA) */}
+      {/* FORMULARIO */}
       <div className="card" style={{ marginTop: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
           <div>
@@ -292,3 +405,4 @@ function HoyInner() {
     </div>
   );
 }
+
