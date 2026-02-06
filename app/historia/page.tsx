@@ -321,17 +321,26 @@ export default function HistoriaPage() {
                   </div>
 
                   {/* ✅ Comidas del día */}
-                  {plan ? (
-                    <div style={{ marginTop: 10 }}>
-                      <div className="label" style={{ marginBottom: 6 }}>🍽️ Comidas</div>
-                      <div className="small" style={{ lineHeight: 1.45 }}>
-                        {plan.desayuno_plato ? <div>• Desayuno: <b>{plan.desayuno_plato}</b></div> : null}
-                        {plan.comida_plato ? <div>• Comida: <b>{plan.comida_plato}</b></div> : null}
-                        {plan.merienda_plato ? <div>• Merienda: <b>{plan.merienda_plato}</b></div> : null}
-                        {plan.cena_plato ? <div>• Cena: <b>{plan.cena_plato}</b></div> : null}
-                        {!plan.desayuno_plato && !plan.comida_plato && !plan.merienda_plato && !plan.cena_plato ? (
-                          <div>— Sin plan guardado</div>
-                        ) : null}
+                 {okDiet(log) ? (
+  plan ? (
+    <div style={{ marginTop: 10 }}>
+      <div className="label" style={{ marginBottom: 6 }}>🍽️ Lo que he comido</div>
+      <div className="small" style={{ lineHeight: 1.45 }}>
+        {plan.desayuno_plato ? <div>• Desayuno: <b>{plan.desayuno_plato}</b></div> : null}
+        {plan.comida_plato ? <div>• Comida: <b>{plan.comida_plato}</b></div> : null}
+        {plan.merienda_plato ? <div>• Merienda: <b>{plan.merienda_plato}</b></div> : null}
+        {plan.cena_plato ? <div>• Cena: <b>{plan.cena_plato}</b></div> : null}
+        {!plan.desayuno_plato && !plan.comida_plato && !plan.merienda_plato && !plan.cena_plato ? (
+          <div>— Dieta OK, pero el plan está vacío</div>
+        ) : null}
+      </div>
+    </div>
+  ) : (
+    <div style={{ marginTop: 10 }} className="small">
+      🍽️ Dieta OK, pero no hay plan guardado para este día
+    </div>
+  )
+) : null}
                       </div>
                     </div>
                   ) : (
