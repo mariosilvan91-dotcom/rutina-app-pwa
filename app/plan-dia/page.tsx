@@ -246,17 +246,24 @@ function PlanSemanalInner() {
   }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function openDetalle(platoName: string | null) {
-    if (!platoName) return;
+    // ✅ DEBUG visible
+    alert("Ver detalle: " + (platoName ?? "VACÍO"));
 
     setDrawerOpen(true);
-    setDrawerPlatoName(platoName);
+    setDrawerPlatoName(platoName ?? "Sin plato");
     setDrawerPlatoId(null);
     setDrawerItems([]);
     setDrawerError("");
     setDrawerLoading(true);
 
+    if (!platoName) {
+      setDrawerError("No has seleccionado ningún plato.");
+      setDrawerLoading(false);
+      return;
+    }
+
     try {
-      // 1) Buscar ID del plato por nombre (stg_platos)
+      // 1) Buscar ID del plato por nombre (requiere stg_platos.id)
       const { data: pData, error: pErr } = await supabase
         .from("stg_platos")
         .select("id,plato")
@@ -265,15 +272,18 @@ function PlanSemanalInner() {
         .maybeSingle();
 
       if (pErr) throw pErr;
+
       const pid = (pData as any)?.id as string | undefined;
+
       if (!pid) {
-        setDrawerError("No encuentro el ID del plato. Revisa que stg_platos tenga columna id.");
+        setDrawerError("No encuentro el ID del plato. Revisa que stg_platos tenga columna id (uuid).");
         setDrawerLoading(false);
         return;
       }
+
       setDrawerPlatoId(pid);
 
-      // 2) Traer ingredientes + macros desde la vista
+      // 2) Ingredientes + macros desde la vista
       const { data: items, error: iErr } = await supabase
         .from("v_plato_items_macros")
         .select("*")
@@ -377,7 +387,6 @@ function PlanSemanalInner() {
                     onView={() => openDetalle(r.desayuno_plato)}
                     platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
                   />
-
                   <SelectPlato
                     label="Comida"
                     value={r.comida_plato}
@@ -385,7 +394,6 @@ function PlanSemanalInner() {
                     onView={() => openDetalle(r.comida_plato)}
                     platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
                   />
-
                   <SelectPlato
                     label="Merienda"
                     value={r.merienda_plato}
@@ -393,7 +401,6 @@ function PlanSemanalInner() {
                     onView={() => openDetalle(r.merienda_plato)}
                     platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
                   />
-
                   <SelectPlato
                     label="Cena"
                     value={r.cena_plato}
@@ -511,7 +518,9 @@ function SelectPlato({
     <div>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
         <div className="label">{label}</div>
-        <button className="btn" type="button" onClick={onView} disabled={!value}>
+
+        {/* ✅ Visible siempre */}
+        <button className="btn" type="button" onClick={onView} style={{ padding: "8px 10px", borderRadius: 12 }}>
           Ver detalle
         </button>
       </div>
@@ -524,6 +533,10 @@ function SelectPlato({
           </option>
         ))}
       </select>
+
+      <div className="small" style={{ marginTop: 6, opacity: 0.85 }}>
+        Seleccionado: <b>{value ?? "—"}</b>
+      </div>
     </div>
   );
 }
