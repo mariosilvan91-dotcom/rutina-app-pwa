@@ -4,15 +4,18 @@ import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
 
-type Plato = {
-  tipo_dia: "entreno" | "descanso";
-  comida: "desayuno" | "comida" | "merienda" | "cena";
+type TipoDia = "entreno" | "descanso";
+type ComidaKey = "desayuno" | "comida" | "merienda" | "cena";
+
+type PlatoRow = {
+  tipo_dia: TipoDia;
+  comida: ComidaKey;
   plato: string;
 };
 
 type WeekDayPlan = {
-  day: string; // YYYY-MM-DD
-  tipo_dia: "entreno" | "descanso";
+  day: string;
+  tipo_dia: TipoDia;
   desayuno_plato: string | null;
   comida_plato: string | null;
   merienda_plato: string | null;
@@ -34,12 +37,15 @@ type PlatoItemMacro = {
   grasas_g: number;
 };
 
+const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
+
 function ymd(d: Date) {
   const yy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yy}-${mm}-${dd}`;
 }
+
 function startOfWeekMonday(d: Date) {
   const x = new Date(d);
   const day = (x.getDay() + 6) % 7;
@@ -47,9 +53,8 @@ function startOfWeekMonday(d: Date) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
-const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
 
-function pickOne(arr: Plato[]) {
+function pickOne<T>(arr: T[]) {
   if (!arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -58,8 +63,6 @@ function r1(n: any) {
   const x = Number(n || 0);
   return Math.round(x * 10) / 10;
 }
-
-type MealKey = "desayuno" | "comida" | "merienda" | "cena";
 
 export default function PlanDiaPage() {
   return (
@@ -70,10 +73,10 @@ export default function PlanDiaPage() {
 }
 
 function PlanSemanalInner() {
-  const [userId, setUserId] = useState("");
+  const [userId, setUserId] = useState<string>("");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [status, setStatus] = useState<string>("");
 
   const weekStart = useMemo(() => startOfWeekMonday(anchor), [anchor]);
   const weekStartISO = useMemo(() => ymd(weekStart), [weekStart]);
@@ -86,7 +89,7 @@ function PlanSemanalInner() {
     });
   }, [weekStart]);
 
-  const [platos, setPlatos] = useState<Plato[]>([]);
+  const [platos, setPlatos] = useState<PlatoRow[]>([]);
   const [rows, setRows] = useState<WeekDayPlan[]>(
     () =>
       Array.from({ length: 7 }, (_, i) => {
@@ -103,13 +106,13 @@ function PlanSemanalInner() {
       })
   );
 
-  // Estado del “desplegable detalle” por día+comida
+  // Estado del desplegable de detalle (por day + comida)
   const [openDetail, setOpenDetail] = useState<Record<string, boolean>>({});
   const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
   const [detailError, setDetailError] = useState<Record<string, string>>({});
   const [detailItems, setDetailItems] = useState<Record<string, PlatoItemMacro[]>>({});
 
-  function detailKey(day: string, meal: MealKey) {
+  function dk(day: string, meal: ComidaKey) {
     return `${day}__${meal}`;
   }
 
@@ -117,11 +120,12 @@ function PlanSemanalInner() {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
   }, []);
 
-  // Cargar platos desde stg_platos
+  // Cargar platos
   useEffect(() => {
     (async () => {
       setLoading(true);
       setStatus("");
+
       const { data, error } = await supabase
         .from("stg_platos")
         .select("tipo_dia,comida,plato");
@@ -131,6 +135,7 @@ function PlanSemanalInner() {
         setLoading(false);
         return;
       }
+
       setPlatos((data ?? []) as any);
       setLoading(false);
     })();
@@ -139,14 +144,15 @@ function PlanSemanalInner() {
   // Cargar semana guardada
   useEffect(() => {
     if (!userId) return;
+
     (async () => {
       setLoading(true);
       setStatus("");
 
       const from = ymd(weekStart);
-      const to = ymd(
-        new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6)
-      );
+      const toDate = new Date(weekStart);
+      toDate.setDate(toDate.getDate() + 6);
+      const to = ymd(toDate);
 
       const { data, error } = await supabase
         .from("week_plan_days")
@@ -171,15 +177,15 @@ function PlanSemanalInner() {
         cena_plato: null,
       }));
 
-      const map = new Map<string, any>();
-      (data ?? []).forEach((r: any) => map.set(String(r.day), r));
+      const m = new Map<string, any>();
+      (data ?? []).forEach((r: any) => m.set(String(r.day), r));
 
       const merged = base.map((b) => {
-        const r = map.get(b.day);
+        const r = m.get(b.day);
         if (!r) return b;
         return {
           day: b.day,
-          tipo_dia: (r.tipo_dia ?? "entreno") as any,
+          tipo_dia: (r.tipo_dia ?? "entreno") as TipoDia,
           desayuno_plato: r.desayuno_plato ?? null,
           comida_plato: r.comida_plato ?? null,
           merienda_plato: r.merienda_plato ?? null,
@@ -192,11 +198,9 @@ function PlanSemanalInner() {
     })();
   }, [userId, weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const options = useMemo(() => {
-    const by = (tipo: "entreno" | "descanso", comida: Plato["comida"]) =>
-      platos.filter((p) => p.tipo_dia === tipo && p.comida === comida);
-    return { by };
-  }, [platos]);
+  function by(tipo: TipoDia, comida: ComidaKey) {
+    return platos.filter((p) => p.tipo_dia === tipo && p.comida === comida);
+  }
 
   function setRow(idx: number, patch: Partial<WeekDayPlan>) {
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -205,15 +209,14 @@ function PlanSemanalInner() {
   function autogenerarSemana() {
     setRows((prev) =>
       prev.map((r) => {
-        const d = r.tipo_dia;
-        const des = pickOne(options.by(d, "desayuno"))?.plato ?? r.desayuno_plato;
-        const com = pickOne(options.by(d, "comida"))?.plato ?? r.comida_plato;
-        const mer = pickOne(options.by(d, "merienda"))?.plato ?? r.merienda_plato;
-        const cen = pickOne(options.by(d, "cena"))?.plato ?? r.cena_plato;
+        const des = pickOne(by(r.tipo_dia, "desayuno"))?.plato ?? r.desayuno_plato;
+        const com = pickOne(by(r.tipo_dia, "comida"))?.plato ?? r.comida_plato;
+        const mer = pickOne(by(r.tipo_dia, "merienda"))?.plato ?? r.merienda_plato;
+        const cen = pickOne(by(r.tipo_dia, "cena"))?.plato ?? r.cena_plato;
         return { ...r, desayuno_plato: des, comida_plato: com, merienda_plato: mer, cena_plato: cen };
       })
     );
-    setStatus("Semana autogenerada ✅ (puedes ajustar a mano)");
+    setStatus("Semana autogenerada ✅");
   }
 
   async function guardarSemana() {
@@ -233,9 +236,7 @@ function PlanSemanalInner() {
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await supabase
-      .from("week_plan_days")
-      .upsert(payload, { onConflict: "user_id,day" });
+    const { error } = await supabase.from("week_plan_days").upsert(payload, { onConflict: "user_id,day" });
 
     setLoading(false);
     setStatus(error ? error.message : "Semana guardada ✅");
@@ -256,30 +257,40 @@ function PlanSemanalInner() {
     return `${a} — ${b}`;
   }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function toggleDetalle(day: string, meal: MealKey, platoName: string | null) {
-    const k = detailKey(day, meal);
+  function totals(items: PlatoItemMacro[]) {
+    let kcal = 0, p = 0, c = 0, f = 0;
+    for (const x of items) {
+      kcal += Number(x.kcal || 0);
+      p += Number(x.prot_g || 0);
+      c += Number(x.carbs_g || 0);
+      f += Number(x.grasas_g || 0);
+    }
+    return { kcal: r1(kcal), p: r1(p), c: r1(c), f: r1(f) };
+  }
 
-    // toggle UI
-    setOpenDetail((prev) => ({ ...prev, [k]: !prev[k] }));
+  async function toggleDetalle(day: string, meal: ComidaKey, platoName: string | null) {
+    const key = dk(day, meal);
 
-    // si lo estamos cerrando, no hace falta cargar
-    if (openDetail[k]) return;
+    // abrir/cerrar
+    setOpenDetail((prev) => ({ ...prev, [key]: !prev[key] }));
 
-    // si ya tenemos data, no recargamos
-    if (detailItems[k]?.length) return;
+    // si se está cerrando, salir
+    if (openDetail[key]) return;
 
-    // si no hay plato, mostramos error friendly
+    // si ya cargado, no recargar
+    if (detailItems[key]?.length) return;
+
     if (!platoName) {
-      setDetailError((prev) => ({ ...prev, [k]: "No hay plato seleccionado." }));
-      setDetailItems((prev) => ({ ...prev, [k]: [] }));
+      setDetailError((prev) => ({ ...prev, [key]: "No hay plato seleccionado." }));
+      setDetailItems((prev) => ({ ...prev, [key]: [] }));
       return;
     }
 
-    setDetailLoading((prev) => ({ ...prev, [k]: true }));
-    setDetailError((prev) => ({ ...prev, [k]: "" }));
+    setDetailLoading((prev) => ({ ...prev, [key]: true }));
+    setDetailError((prev) => ({ ...prev, [key]: "" }));
 
     try {
-      // 1) buscar el id del plato por nombre (stg_platos debe tener id)
+      // Buscar plato id (requiere stg_platos.id)
       const { data: pData, error: pErr } = await supabase
         .from("stg_platos")
         .select("id,plato")
@@ -290,11 +301,8 @@ function PlanSemanalInner() {
       if (pErr) throw pErr;
 
       const pid = (pData as any)?.id as string | undefined;
-      if (!pid) {
-        throw new Error("No encuentro el ID del plato. Revisa que stg_platos tenga columna id (uuid).");
-      }
+      if (!pid) throw new Error("No encuentro ID del plato. Asegura stg_platos.id (uuid).");
 
-      // 2) ingredientes + macros desde la vista
       const { data: items, error: iErr } = await supabase
         .from("v_plato_items_macros")
         .select("*")
@@ -303,34 +311,20 @@ function PlanSemanalInner() {
 
       if (iErr) throw iErr;
 
-      setDetailItems((prev) => ({ ...prev, [k]: (items ?? []) as any }));
+      setDetailItems((prev) => ({ ...prev, [key]: (items ?? []) as any }));
     } catch (e: any) {
-      setDetailError((prev) => ({ ...prev, [k]: e?.message ?? "Error cargando detalle" }));
-      setDetailItems((prev) => ({ ...prev, [k]: [] }));
+      setDetailError((prev) => ({ ...prev, [key]: e?.message ?? "Error cargando detalle" }));
+      setDetailItems((prev) => ({ ...prev, [key]: [] }));
     } finally {
-      setDetailLoading((prev) => ({ ...prev, [k]: false }));
+      setDetailLoading((prev) => ({ ...prev, [key]: false }));
     }
-  }
-
-  function totals(items: PlatoItemMacro[]) {
-    let kcal = 0,
-      p = 0,
-      c = 0,
-      f = 0;
-    for (const x of items) {
-      kcal += Number(x.kcal || 0);
-      p += Number(x.prot_g || 0);
-      c += Number(x.carbs_g || 0);
-      f += Number(x.grasas_g || 0);
-    }
-    return { kcal: r1(kcal), p: r1(p), c: r1(c), f: r1(f) };
   }
 
   return (
     <div>
       <div className="card">
         <h1 className="h1">Plan semanal</h1>
-        <p className="p">Edita tu semana completa. Cada comida tiene botón “Detalle” con ingredientes y macros.</p>
+        <p className="p">Cada comida tiene un botón “Detalle” que despliega ingredientes + macros.</p>
 
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
           <button className="btn" onClick={() => shiftWeek(-1)}>←</button>
@@ -373,67 +367,63 @@ function PlanSemanalInner() {
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 12 }}>
-                  <MealSelect
+                  <MealBlock
                     day={r.day}
                     meal="desayuno"
                     label="Desayuno"
-                    tipoDia={r.tipo_dia}
                     value={r.desayuno_plato}
                     onChange={(v) => setRow(idx, { desayuno_plato: v })}
-                    platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
-                    openDetail={openDetail}
-                    detailLoading={detailLoading}
-                    detailError={detailError}
-                    detailItems={detailItems}
-                    onToggleDetalle={toggleDetalle}
+                    platos={by(r.tipo_dia, "desayuno").map((p) => p.plato)}
+                    isOpen={!!openDetail[dk(r.day, "desayuno")]}
+                    isLoading={!!detailLoading[dk(r.day, "desayuno")]}
+                    err={detailError[dk(r.day, "desayuno")] || ""}
+                    items={detailItems[dk(r.day, "desayuno")] || []}
+                    onToggle={() => toggleDetalle(r.day, "desayuno", r.desayuno_plato)}
                     totalsFn={totals}
                   />
 
-                  <MealSelect
+                  <MealBlock
                     day={r.day}
                     meal="comida"
                     label="Comida"
-                    tipoDia={r.tipo_dia}
                     value={r.comida_plato}
                     onChange={(v) => setRow(idx, { comida_plato: v })}
-                    platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
-                    openDetail={openDetail}
-                    detailLoading={detailLoading}
-                    detailError={detailError}
-                    detailItems={detailItems}
-                    onToggleDetalle={toggleDetalle}
+                    platos={by(r.tipo_dia, "comida").map((p) => p.plato)}
+                    isOpen={!!openDetail[dk(r.day, "comida")]}
+                    isLoading={!!detailLoading[dk(r.day, "comida")]}
+                    err={detailError[dk(r.day, "comida")] || ""}
+                    items={detailItems[dk(r.day, "comida")] || []}
+                    onToggle={() => toggleDetalle(r.day, "comida", r.comida_plato)}
                     totalsFn={totals}
                   />
 
-                  <MealSelect
+                  <MealBlock
                     day={r.day}
                     meal="merienda"
                     label="Merienda"
-                    tipoDia={r.tipo_dia}
                     value={r.merienda_plato}
                     onChange={(v) => setRow(idx, { merienda_plato: v })}
-                    platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
-                    openDetail={openDetail}
-                    detailLoading={detailLoading}
-                    detailError={detailError}
-                    detailItems={detailItems}
-                    onToggleDetalle={toggleDetalle}
+                    platos={by(r.tipo_dia, "merienda").map((p) => p.plato)}
+                    isOpen={!!openDetail[dk(r.day, "merienda")]}
+                    isLoading={!!detailLoading[dk(r.day, "merienda")]}
+                    err={detailError[dk(r.day, "merienda")] || ""}
+                    items={detailItems[dk(r.day, "merienda")] || []}
+                    onToggle={() => toggleDetalle(r.day, "merienda", r.merienda_plato)}
                     totalsFn={totals}
                   />
 
-                  <MealSelect
+                  <MealBlock
                     day={r.day}
                     meal="cena"
                     label="Cena"
-                    tipoDia={r.tipo_dia}
                     value={r.cena_plato}
                     onChange={(v) => setRow(idx, { cena_plato: v })}
-                    platos={options.by(r.tipo_dia, "cena").map((p) => p.plato)}
-                    openDetail={openDetail}
-                    detailLoading={detailLoading}
-                    detailError={detailError}
-                    detailItems={detailItems}
-                    onToggleDetalle={toggleDetalle}
+                    platos={by(r.tipo_dia, "cena").map((p) => p.plato)}
+                    isOpen={!!openDetail[dk(r.day, "cena")]}
+                    isLoading={!!detailLoading[dk(r.day, "cena")]}
+                    err={detailError[dk(r.day, "cena")] || ""}
+                    items={detailItems[dk(r.day, "cena")] || []}
+                    onToggle={() => toggleDetalle(r.day, "cena", r.cena_plato)}
                     totalsFn={totals}
                   />
                 </div>
@@ -446,40 +436,30 @@ function PlanSemanalInner() {
   );
 }
 
-function MealSelect(props: {
+function MealBlock(props: {
   day: string;
-  meal: MealKey;
+  meal: ComidaKey;
   label: string;
-  tipoDia: "entreno" | "descanso";
   value: string | null;
   onChange: (v: string | null) => void;
   platos: string[];
 
-  openDetail: Record<string, boolean>;
-  detailLoading: Record<string, boolean>;
-  detailError: Record<string, string>;
-  detailItems: Record<string, PlatoItemMacro[]>;
-  onToggleDetalle: (day: string, meal: MealKey, platoName: string | null) => void;
+  isOpen: boolean;
+  isLoading: boolean;
+  err: string;
+  items: PlatoItemMacro[];
+  onToggle: () => void;
+
   totalsFn: (items: PlatoItemMacro[]) => { kcal: number; p: number; c: number; f: number };
 }) {
-  const k = `${props.day}__${props.meal}`;
-  const isOpen = !!props.openDetail[k];
-  const isLoading = !!props.detailLoading[k];
-  const err = props.detailError[k] || "";
-  const items = props.detailItems[k] || [];
-  const t = props.totalsFn(items);
+  const t = props.totalsFn(props.items);
 
   return (
     <div>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
         <div className="label" style={{ marginBottom: 0 }}>{props.label}</div>
-        <button
-          className="btn"
-          type="button"
-          onClick={() => props.onToggleDetalle(props.day, props.meal, props.value)}
-          style={{ padding: "8px 10px", borderRadius: 12 }}
-        >
-          {isOpen ? "Ocultar" : "Detalle"}
+        <button className="btn" type="button" onClick={props.onToggle} style={{ padding: "8px 10px", borderRadius: 12 }}>
+          {props.isOpen ? "Ocultar" : "Detalle"}
         </button>
       </div>
 
@@ -490,18 +470,15 @@ function MealSelect(props: {
         ))}
       </select>
 
-      {/* PANEL DESPLEGABLE */}
-      {isOpen ? (
+      {props.isOpen ? (
         <div className="card" style={{ marginTop: 10, background: "rgba(255,255,255,.03)" }}>
-          {isLoading ? <div className="small">Cargando detalle…</div> : null}
+          {props.isLoading ? <div className="small">Cargando detalle…</div> : null}
 
-          {!isLoading && err ? (
-            <div className="small" style={{ color: "var(--danger)" }}>
-              {err}
-            </div>
+          {!props.isLoading && props.err ? (
+            <div className="small" style={{ color: "var(--danger)" }}>{props.err}</div>
           ) : null}
 
-          {!isLoading && !err ? (
+          {!props.isLoading && !props.err ? (
             <>
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <span className="badge">Kcal <b>{t.kcal}</b></span>
@@ -511,7 +488,7 @@ function MealSelect(props: {
               </div>
 
               <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                {items.map((x) => (
+                {props.items.map((x) => (
                   <div key={x.plato_item_id} className="card" style={{ padding: 10, background: "rgba(255,255,255,.02)" }}>
                     <div style={{ fontWeight: 800 }}>
                       {x.order_idx}. {x.alimento} <span className="small">({x.grams} g)</span>
@@ -523,7 +500,7 @@ function MealSelect(props: {
                   </div>
                 ))}
 
-                {!items.length ? (
+                {!props.items.length ? (
                   <div className="small">
                     Este plato no tiene ingredientes aún en <b>plato_items</b>.
                   </div>
