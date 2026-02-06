@@ -11,6 +11,14 @@ function boolLabel(v: boolean | null) {
   return v === null ? "—" : v ? "Sí" : "No";
 }
 
+type TodayPlan = {
+  tipo_dia?: string | null;
+  desayuno_plato: string | null;
+  comida_plato: string | null;
+  merienda_plato: string | null;
+  cena_plato: string | null;
+};
+
 export default function HomePage() {
   return (
     <AuthGate>
@@ -30,6 +38,9 @@ function HoyInner() {
   const [notes, setNotes] = useState<string>("");
 
   const [status, setStatus] = useState<string>("");
+
+  // ✅ Plan de comidas del día (de week_plan_days)
+  const [todayPlan, setTodayPlan] = useState<TodayPlan | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
@@ -64,6 +75,31 @@ function HoyInner() {
           setSleep(data.sleep_h);
           setNotes(data.notes ?? "");
         }
+      }
+    })();
+  }, [userId, day]);
+
+  // ✅ Cargar plan semanal del día (si existe)
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      const { data, error } = await supabase
+        .from("week_plan_days")
+        .select("desayuno_plato,comida_plato,merienda_plato,cena_plato,tipo_dia")
+        .eq("user_id", userId)
+        .eq("day", day)
+        .maybeSingle();
+
+      if (!error && data) {
+        setTodayPlan({
+          tipo_dia: (data as any).tipo_dia ?? null,
+          desayuno_plato: (data as any).desayuno_plato ?? null,
+          comida_plato: (data as any).comida_plato ?? null,
+          merienda_plato: (data as any).merienda_plato ?? null,
+          cena_plato: (data as any).cena_plato ?? null,
+        });
+      } else {
+        setTodayPlan(null);
       }
     })();
   }, [userId, day]);
@@ -105,7 +141,9 @@ function HoyInner() {
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ minWidth: 0 }}>
-            <h1 className="h1" style={{ marginBottom: 6 }}>HOY</h1>
+            <h1 className="h1" style={{ marginBottom: 6 }}>
+              HOY
+            </h1>
             <p className="p">Rellena y guarda. Funciona offline y sincroniza al volver internet.</p>
           </div>
           <span className="badge">
@@ -113,6 +151,51 @@ function HoyInner() {
           </span>
         </div>
       </div>
+
+      {/* ✅ HOY TOCA (comidas del plan semanal) */}
+      {todayPlan ? (
+        <div className="card" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>
+            🍽️ Hoy toca{todayPlan.tipo_dia ? ` (${todayPlan.tipo_dia})` : ""}
+          </div>
+          <div className="small" style={{ lineHeight: 1.5 }}>
+            {todayPlan.desayuno_plato ? (
+              <div>
+                • Desayuno: <b>{todayPlan.desayuno_plato}</b>
+              </div>
+            ) : null}
+            {todayPlan.comida_plato ? (
+              <div>
+                • Comida: <b>{todayPlan.comida_plato}</b>
+              </div>
+            ) : null}
+            {todayPlan.merienda_plato ? (
+              <div>
+                • Merienda: <b>{todayPlan.merienda_plato}</b>
+              </div>
+            ) : null}
+            {todayPlan.cena_plato ? (
+              <div>
+                • Cena: <b>{todayPlan.cena_plato}</b>
+              </div>
+            ) : null}
+
+            {!todayPlan.desayuno_plato &&
+            !todayPlan.comida_plato &&
+            !todayPlan.merienda_plato &&
+            !todayPlan.cena_plato ? (
+              <div>— Plan vacío para hoy</div>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <div className="card" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>🍽️ Hoy toca</div>
+          <div className="small">
+            No hay plan guardado para hoy. Ve a “Plan día” y guarda la semana.
+          </div>
+        </div>
+      )}
 
       {/* FORMULARIO (MÓVIL: COLUMNA) */}
       <div className="card" style={{ marginTop: 12 }}>
@@ -122,9 +205,7 @@ function HoyInner() {
             <select
               className="input"
               value={gym === null ? "" : gym ? "1" : "0"}
-              onChange={(e) =>
-                setGym(e.target.value === "" ? null : e.target.value === "1")
-              }
+              onChange={(e) => setGym(e.target.value === "" ? null : e.target.value === "1")}
             >
               <option value="">—</option>
               <option value="1">Sí</option>
@@ -137,9 +218,7 @@ function HoyInner() {
             <select
               className="input"
               value={dietOk === null ? "" : dietOk ? "1" : "0"}
-              onChange={(e) =>
-                setDietOk(e.target.value === "" ? null : e.target.value === "1")
-              }
+              onChange={(e) => setDietOk(e.target.value === "" ? null : e.target.value === "1")}
             >
               <option value="">—</option>
               <option value="1">Sí</option>
