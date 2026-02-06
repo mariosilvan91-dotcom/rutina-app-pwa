@@ -449,12 +449,11 @@ export default function HistoriaPage() {
                     <Dot ok={okSleep(log, settings)} />
                   </div>
 
-                  {/* 🍽️ SOLO si Dieta=SI y hay plan */}
-                  {okDiet(log) && plan ? (
-                    <div className="small" style={{ marginTop: 6, textAlign: "center", opacity: 0.8 }}>
-                      🍽️
-                    </div>
-                  ) : null}
+                  <div className="small" style={{ marginTop: 6, textAlign: "center", opacity: 0.85 }}>
+  {okGym(log) ? "💪" : ""}
+  {okGym(log) && okDiet(log) && plan ? " " : ""}
+  {okDiet(log) && plan ? "🍽️" : ""}
+</div>
                 </div>
               );
             })}
