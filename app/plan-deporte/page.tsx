@@ -3,6 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
+import { todayISO } from "@/lib/date";
+
+type DayPlanRow = {
+  day: string;
+  tipo_dia: "entreno" | "descanso";
+  sport: string | null;
+  gym_workout_id: string | null;
+
+  desayuno_plato: string | null;
+  comida_plato: string | null;
+  merienda_plato: string | null;
+  cena_plato: string | null;
+};
 
 type WorkoutTemplate = {
   id: string;
@@ -24,13 +37,6 @@ type WorkoutExercise = {
   rir_max: number | null;
   rest_sec: number | null;
   notes: string | null;
-};
-
-type SportRow = {
-  day: string;
-  tipo_dia: string | null;
-  sport: string | null;
-  gym_workout_id: string | null;
 };
 
 const SPORT_OPTIONS = [
@@ -60,44 +66,36 @@ function startOfWeekMonday(d: Date) {
   return x;
 }
 
-export default function PlanDeportePage() {
+export default function PlanDiaPage() {
   return (
     <AuthGate>
-      <PlanDeporteInner />
+      <PlanDiaInner />
     </AuthGate>
   );
 }
 
-function PlanDeporteInner() {
+function PlanDiaInner() {
   const [userId, setUserId] = useState("");
   const [weekStart, setWeekStart] = useState(() => ymd(startOfWeekMonday(new Date())));
-  const [rows, setRows] = useState<SportRow[]>([]);
+  const [rows, setRows] = useState<DayPlanRow[]>([]);
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
-  const [status, setStatus] = useState("");
+  const [selectedDay, setSelectedDay] = useState<string>(todayISO());
 
-  // drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerLoading, setDrawerLoading] = useState(false);
-  const [drawerTitle, setDrawerTitle] = useState("");
-  const [drawerNotes, setDrawerNotes] = useState("");
+  const [drawerTitle, setDrawerTitle] = useState<string>("");
+  const [drawerNotes, setDrawerNotes] = useState<string>("");
   const [drawerItems, setDrawerItems] = useState<WorkoutExercise[]>([]);
+
+  const [status, setStatus] = useState<string>("");
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
   }, []);
 
-  const daysOfWeek = useMemo(() => {
-    const s = new Date(weekStart);
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(s);
-      d.setDate(s.getDate() + i);
-      return d;
-    });
-  }, [weekStart]);
-
+  // cargar catálogo de rutinas
   useEffect(() => {
     if (!userId) return;
-
     (async () => {
       const { data, error } = await supabase
         .from("workout_templates")
@@ -108,30 +106,42 @@ function PlanDeporteInner() {
     })();
   }, [userId]);
 
-  // load week sports from week_plan_days (reutilizamos tu tabla)
+  const daysOfWeek = useMemo(() => {
+    const s = new Date(weekStart);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(s);
+      d.setDate(s.getDate() + i);
+      return d;
+    });
+  }, [weekStart]);
+
+  // cargar semana
   useEffect(() => {
     if (!userId) return;
-
     (async () => {
       setStatus("");
-
-      const base: SportRow[] = daysOfWeek.map((d) => ({
+      // base week
+      const base: DayPlanRow[] = daysOfWeek.map((d) => ({
         day: ymd(d),
         tipo_dia: "entreno",
         sport: null,
         gym_workout_id: null,
+        desayuno_plato: null,
+        comida_plato: null,
+        merienda_plato: null,
+        cena_plato: null,
       }));
 
       const { data, error } = await supabase
         .from("week_plan_days")
-        .select("day,tipo_dia,sport,gym_workout_id")
+        .select("day,tipo_dia,sport,gym_workout_id,desayuno_plato,comida_plato,merienda_plato,cena_plato")
         .eq("user_id", userId)
         .eq("week_start", weekStart)
         .order("day", { ascending: true });
 
       if (error) {
         setRows(base);
-        setStatus("No pude cargar la semana (mostrando plantilla).");
+        setStatus("No pude cargar la semana (usando plantilla).");
         return;
       }
 
@@ -143,9 +153,13 @@ function PlanDeporteInner() {
         if (!r) return b;
         return {
           ...b,
-          tipo_dia: r.tipo_dia ?? b.tipo_dia,
+          tipo_dia: (r.tipo_dia ?? b.tipo_dia) as any,
           sport: r.sport ?? null,
           gym_workout_id: r.gym_workout_id ?? null,
+          desayuno_plato: r.desayuno_plato ?? null,
+          comida_plato: r.comida_plato ?? null,
+          merienda_plato: r.merienda_plato ?? null,
+          cena_plato: r.cena_plato ?? null,
         };
       });
 
@@ -153,7 +167,7 @@ function PlanDeporteInner() {
     })();
   }, [userId, weekStart, daysOfWeek]);
 
-  function setRow(day: string, patch: Partial<SportRow>) {
+  function setRow(day: string, patch: Partial<DayPlanRow>) {
     setRows((prev) => prev.map((r) => (r.day === day ? { ...r, ...patch } : r)));
   }
 
@@ -161,18 +175,24 @@ function PlanDeporteInner() {
     if (!userId) return;
     setStatus("Guardando…");
 
-    // upsert SOLO lo de deporte/rutina (sin tocar comidas)
     const payload = rows.map((r) => ({
       user_id: userId,
       week_start: weekStart,
       day: r.day,
-      tipo_dia: r.tipo_dia ?? "entreno",
+      tipo_dia: r.tipo_dia,
       sport: r.sport,
       gym_workout_id: r.gym_workout_id,
+      desayuno_plato: r.desayuno_plato,
+      comida_plato: r.comida_plato,
+      merienda_plato: r.merienda_plato,
+      cena_plato: r.cena_plato,
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await supabase.from("week_plan_days").upsert(payload, { onConflict: "user_id,day" });
+    const { error } = await supabase
+      .from("week_plan_days")
+      .upsert(payload, { onConflict: "user_id,day" });
+
     setStatus(error ? `Error guardando: ${error.message}` : "Semana guardada ✅");
   }
 
@@ -199,7 +219,6 @@ function PlanDeporteInner() {
       .order("order", { ascending: true });
 
     setDrawerLoading(false);
-
     if (error) {
       setDrawerNotes((s) => (s ? s + "\n" : "") + `Error: ${error.message}`);
       return;
@@ -218,8 +237,8 @@ function PlanDeporteInner() {
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ minWidth: 0 }}>
-            <h1 className="h1" style={{ marginBottom: 6 }}>Plan deporte</h1>
-            <p className="p">Elige deporte por día. Si es gimnasio, elige rutina y mira ejercicios.</p>
+            <h1 className="h1" style={{ marginBottom: 6 }}>Plan día</h1>
+            <p className="p">Modo flexible: elige deporte y (si es gimnasio) elige rutina. Guarda por semanas.</p>
           </div>
           <span className="badge">Semana: <b>{weekStart}</b></span>
         </div>
@@ -241,17 +260,23 @@ function PlanDeporteInner() {
       <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
         {rows.map((r) => {
           const isGym = r.sport === "Gimnasio";
+          const tplName = templates.find((t) => t.id === r.gym_workout_id)?.name ?? "";
 
           return (
             <div key={r.day} className="card">
               <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontWeight: 900 }}>{r.day}</div>
-
                 <div className="row" style={{ gap: 8 }}>
-                  <button className={`btn ${r.tipo_dia === "entreno" ? "primary" : ""}`} onClick={() => setRow(r.day, { tipo_dia: "entreno" })}>
+                  <button
+                    className={`btn ${r.tipo_dia === "entreno" ? "primary" : ""}`}
+                    onClick={() => setRow(r.day, { tipo_dia: "entreno" })}
+                  >
                     Entreno
                   </button>
-                  <button className={`btn ${r.tipo_dia === "descanso" ? "primary" : ""}`} onClick={() => setRow(r.day, { tipo_dia: "descanso" })}>
+                  <button
+                    className={`btn ${r.tipo_dia === "descanso" ? "primary" : ""}`}
+                    onClick={() => setRow(r.day, { tipo_dia: "descanso" })}
+                  >
                     Descanso
                   </button>
                 </div>
@@ -264,6 +289,7 @@ function PlanDeporteInner() {
                   value={r.sport ?? ""}
                   onChange={(e) => {
                     const v = e.target.value || null;
+                    // Si cambias a NO gimnasio, limpiamos rutina
                     setRow(r.day, { sport: v, gym_workout_id: v === "Gimnasio" ? r.gym_workout_id : null });
                   }}
                 >
@@ -284,7 +310,9 @@ function PlanDeporteInner() {
                   >
                     <option value="">—</option>
                     {templates.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
                     ))}
                   </select>
 
@@ -292,14 +320,18 @@ function PlanDeporteInner() {
                     <button className="btn" onClick={() => openWorkout(r.day)} disabled={!r.gym_workout_id}>
                       Ver rutina
                     </button>
+                    {tplName ? <span className="small" style={{ alignSelf: "center" }}>{tplName}</span> : null}
                   </div>
                 </div>
               ) : null}
+
+              {/* (Opcional) Aquí luego conectaremos el plan de comidas por día */}
             </div>
           );
         })}
       </div>
 
+      {/* Drawer simple */}
       {drawerOpen ? (
         <div
           style={{
@@ -341,11 +373,25 @@ function PlanDeporteInner() {
                       {x.order}. {x.exercise_name}
                     </div>
                     <div className="small" style={{ marginTop: 6, lineHeight: 1.5 }}>
-                      Series: <b>{x.sets}</b>
-                      {x.reps_min || x.reps_max ? <> · Reps: <b>{x.reps_min ?? "—"}–{x.reps_max ?? "—"}</b></> : null}
-                      {x.rir_min || x.rir_max ? <> · RIR: <b>{x.rir_min ?? "—"}–{x.rir_max ?? "—"}</b></> : null}
-                      {x.rest_sec ? <> · Descanso: <b>{x.rest_sec}s</b></> : null}
-                      {x.notes ? <div style={{ marginTop: 6, opacity: 0.9 }}>Nota: {x.notes}</div> : null}
+                      Series: <b>{x.sets}</b>{" "}
+                      {x.reps_min || x.reps_max ? (
+                        <>
+                          · Reps: <b>{x.reps_min ?? "—"}–{x.reps_max ?? "—"}</b>
+                        </>
+                      ) : null}
+                      {x.rir_min || x.rir_max ? (
+                        <>
+                          {" "}· RIR: <b>{x.rir_min ?? "—"}–{x.rir_max ?? "—"}</b>
+                        </>
+                      ) : null}
+                      {x.rest_sec ? (
+                        <>
+                          {" "}· Descanso: <b>{x.rest_sec}s</b>
+                        </>
+                      ) : null}
+                      {x.notes ? (
+                        <div style={{ marginTop: 6, opacity: 0.9 }}>Nota: {x.notes}</div>
+                      ) : null}
                     </div>
                   </div>
                 ))}
