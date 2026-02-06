@@ -54,9 +54,12 @@ function pickOne(arr: Plato[]) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function r1(n: number) {
-  return Math.round((Number(n) || 0) * 10) / 10;
+function r1(n: any) {
+  const x = Number(n || 0);
+  return Math.round(x * 10) / 10;
 }
+
+type MealKey = "desayuno" | "comida" | "merienda" | "cena";
 
 export default function PlanDiaPage() {
   return (
@@ -100,13 +103,15 @@ function PlanSemanalInner() {
       })
   );
 
-  // Drawer detalle plato
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerPlatoName, setDrawerPlatoName] = useState<string | null>(null);
-  const [drawerPlatoId, setDrawerPlatoId] = useState<string | null>(null);
-  const [drawerItems, setDrawerItems] = useState<PlatoItemMacro[]>([]);
-  const [drawerError, setDrawerError] = useState<string>("");
-  const [drawerLoading, setDrawerLoading] = useState(false);
+  // Estado del “desplegable detalle” por día+comida
+  const [openDetail, setOpenDetail] = useState<Record<string, boolean>>({});
+  const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
+  const [detailError, setDetailError] = useState<Record<string, string>>({});
+  const [detailItems, setDetailItems] = useState<Record<string, PlatoItemMacro[]>>({});
+
+  function detailKey(day: string, meal: MealKey) {
+    return `${day}__${meal}`;
+  }
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
@@ -117,7 +122,9 @@ function PlanSemanalInner() {
     (async () => {
       setLoading(true);
       setStatus("");
-      const { data, error } = await supabase.from("stg_platos").select("tipo_dia,comida,plato");
+      const { data, error } = await supabase
+        .from("stg_platos")
+        .select("tipo_dia,comida,plato");
 
       if (error) {
         setStatus(error.message);
@@ -137,7 +144,9 @@ function PlanSemanalInner() {
       setStatus("");
 
       const from = ymd(weekStart);
-      const to = ymd(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6));
+      const to = ymd(
+        new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6)
+      );
 
       const { data, error } = await supabase
         .from("week_plan_days")
@@ -224,7 +233,9 @@ function PlanSemanalInner() {
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await supabase.from("week_plan_days").upsert(payload, { onConflict: "user_id,day" });
+    const { error } = await supabase
+      .from("week_plan_days")
+      .upsert(payload, { onConflict: "user_id,day" });
 
     setLoading(false);
     setStatus(error ? error.message : "Semana guardada ✅");
@@ -245,25 +256,30 @@ function PlanSemanalInner() {
     return `${a} — ${b}`;
   }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function openDetalle(platoName: string | null) {
-    // ✅ DEBUG visible
-    alert("Ver detalle: " + (platoName ?? "VACÍO"));
+  async function toggleDetalle(day: string, meal: MealKey, platoName: string | null) {
+    const k = detailKey(day, meal);
 
-    setDrawerOpen(true);
-    setDrawerPlatoName(platoName ?? "Sin plato");
-    setDrawerPlatoId(null);
-    setDrawerItems([]);
-    setDrawerError("");
-    setDrawerLoading(true);
+    // toggle UI
+    setOpenDetail((prev) => ({ ...prev, [k]: !prev[k] }));
 
+    // si lo estamos cerrando, no hace falta cargar
+    if (openDetail[k]) return;
+
+    // si ya tenemos data, no recargamos
+    if (detailItems[k]?.length) return;
+
+    // si no hay plato, mostramos error friendly
     if (!platoName) {
-      setDrawerError("No has seleccionado ningún plato.");
-      setDrawerLoading(false);
+      setDetailError((prev) => ({ ...prev, [k]: "No hay plato seleccionado." }));
+      setDetailItems((prev) => ({ ...prev, [k]: [] }));
       return;
     }
 
+    setDetailLoading((prev) => ({ ...prev, [k]: true }));
+    setDetailError((prev) => ({ ...prev, [k]: "" }));
+
     try {
-      // 1) Buscar ID del plato por nombre (requiere stg_platos.id)
+      // 1) buscar el id del plato por nombre (stg_platos debe tener id)
       const { data: pData, error: pErr } = await supabase
         .from("stg_platos")
         .select("id,plato")
@@ -274,16 +290,11 @@ function PlanSemanalInner() {
       if (pErr) throw pErr;
 
       const pid = (pData as any)?.id as string | undefined;
-
       if (!pid) {
-        setDrawerError("No encuentro el ID del plato. Revisa que stg_platos tenga columna id (uuid).");
-        setDrawerLoading(false);
-        return;
+        throw new Error("No encuentro el ID del plato. Revisa que stg_platos tenga columna id (uuid).");
       }
 
-      setDrawerPlatoId(pid);
-
-      // 2) Ingredientes + macros desde la vista
+      // 2) ingredientes + macros desde la vista
       const { data: items, error: iErr } = await supabase
         .from("v_plato_items_macros")
         .select("*")
@@ -292,63 +303,51 @@ function PlanSemanalInner() {
 
       if (iErr) throw iErr;
 
-      setDrawerItems((items ?? []) as any);
+      setDetailItems((prev) => ({ ...prev, [k]: (items ?? []) as any }));
     } catch (e: any) {
-      setDrawerError(e?.message ?? "Error cargando detalle del plato");
+      setDetailError((prev) => ({ ...prev, [k]: e?.message ?? "Error cargando detalle" }));
+      setDetailItems((prev) => ({ ...prev, [k]: [] }));
     } finally {
-      setDrawerLoading(false);
+      setDetailLoading((prev) => ({ ...prev, [k]: false }));
     }
   }
 
-  const drawerTotals = useMemo(() => {
+  function totals(items: PlatoItemMacro[]) {
     let kcal = 0,
       p = 0,
       c = 0,
       f = 0;
-    for (const x of drawerItems) {
+    for (const x of items) {
       kcal += Number(x.kcal || 0);
       p += Number(x.prot_g || 0);
       c += Number(x.carbs_g || 0);
       f += Number(x.grasas_g || 0);
     }
     return { kcal: r1(kcal), p: r1(p), c: r1(c), f: r1(f) };
-  }, [drawerItems]);
+  }
 
   return (
     <div>
       <div className="card">
         <h1 className="h1">Plan semanal</h1>
-        <p className="p">Edita tu semana completa y se verá en “Hoy” automáticamente.</p>
+        <p className="p">Edita tu semana completa. Cada comida tiene botón “Detalle” con ingredientes y macros.</p>
 
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
-          <button className="btn" onClick={() => shiftWeek(-1)}>
-            ←
-          </button>
-          <span className="badge">
-            <b>{title}</b>
-          </span>
-          <button className="btn" onClick={() => shiftWeek(1)}>
-            →
-          </button>
+          <button className="btn" onClick={() => shiftWeek(-1)}>←</button>
+          <span className="badge"><b>{title}</b></span>
+          <button className="btn" onClick={() => shiftWeek(1)}>→</button>
         </div>
 
         <div className="row" style={{ gap: 10, marginTop: 12 }}>
-          <button className="btn" onClick={() => setAnchor(new Date())}>
-            Ir a hoy
-          </button>
-          <button className="btn" onClick={autogenerarSemana}>
-            Autogenerar semana
-          </button>
-          <button className="btn primary" onClick={guardarSemana}>
-            Guardar semana
-          </button>
+          <button className="btn" onClick={() => setAnchor(new Date())}>Ir a hoy</button>
+          <button className="btn" onClick={autogenerarSemana}>Autogenerar semana</button>
+          <button className="btn primary" onClick={guardarSemana}>Guardar semana</button>
         </div>
 
         {loading ? <div className="small" style={{ marginTop: 10 }}>Cargando…</div> : null}
         {status ? <div className="small" style={{ marginTop: 10 }}>{status}</div> : null}
       </div>
 
-      {/* Editor semana */}
       <div className="card" style={{ marginTop: 12 }}>
         <div style={{ fontWeight: 900, marginBottom: 10 }}>Editar días</div>
 
@@ -365,48 +364,77 @@ function PlanSemanalInner() {
                 </div>
 
                 <div className="row" style={{ gap: 10, marginTop: 10 }}>
-                  <button
-                    className={`btn ${r.tipo_dia === "entreno" ? "primary" : ""}`}
-                    onClick={() => setRow(idx, { tipo_dia: "entreno" })}
-                  >
+                  <button className={`btn ${r.tipo_dia === "entreno" ? "primary" : ""}`} onClick={() => setRow(idx, { tipo_dia: "entreno" })}>
                     Entreno
                   </button>
-                  <button
-                    className={`btn ${r.tipo_dia === "descanso" ? "primary" : ""}`}
-                    onClick={() => setRow(idx, { tipo_dia: "descanso" })}
-                  >
+                  <button className={`btn ${r.tipo_dia === "descanso" ? "primary" : ""}`} onClick={() => setRow(idx, { tipo_dia: "descanso" })}>
                     Descanso
                   </button>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 10 }}>
-                  <SelectPlato
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 12 }}>
+                  <MealSelect
+                    day={r.day}
+                    meal="desayuno"
                     label="Desayuno"
+                    tipoDia={r.tipo_dia}
                     value={r.desayuno_plato}
                     onChange={(v) => setRow(idx, { desayuno_plato: v })}
-                    onView={() => openDetalle(r.desayuno_plato)}
                     platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
+                    openDetail={openDetail}
+                    detailLoading={detailLoading}
+                    detailError={detailError}
+                    detailItems={detailItems}
+                    onToggleDetalle={toggleDetalle}
+                    totalsFn={totals}
                   />
-                  <SelectPlato
+
+                  <MealSelect
+                    day={r.day}
+                    meal="comida"
                     label="Comida"
+                    tipoDia={r.tipo_dia}
                     value={r.comida_plato}
                     onChange={(v) => setRow(idx, { comida_plato: v })}
-                    onView={() => openDetalle(r.comida_plato)}
                     platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
+                    openDetail={openDetail}
+                    detailLoading={detailLoading}
+                    detailError={detailError}
+                    detailItems={detailItems}
+                    onToggleDetalle={toggleDetalle}
+                    totalsFn={totals}
                   />
-                  <SelectPlato
+
+                  <MealSelect
+                    day={r.day}
+                    meal="merienda"
                     label="Merienda"
+                    tipoDia={r.tipo_dia}
                     value={r.merienda_plato}
                     onChange={(v) => setRow(idx, { merienda_plato: v })}
-                    onView={() => openDetalle(r.merienda_plato)}
                     platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
+                    openDetail={openDetail}
+                    detailLoading={detailLoading}
+                    detailError={detailError}
+                    detailItems={detailItems}
+                    onToggleDetalle={toggleDetalle}
+                    totalsFn={totals}
                   />
-                  <SelectPlato
+
+                  <MealSelect
+                    day={r.day}
+                    meal="cena"
                     label="Cena"
+                    tipoDia={r.tipo_dia}
                     value={r.cena_plato}
                     onChange={(v) => setRow(idx, { cena_plato: v })}
-                    onView={() => openDetalle(r.cena_plato)}
                     platos={options.by(r.tipo_dia, "cena").map((p) => p.plato)}
+                    openDetail={openDetail}
+                    detailLoading={detailLoading}
+                    detailError={detailError}
+                    detailItems={detailItems}
+                    onToggleDetalle={toggleDetalle}
+                    totalsFn={totals}
                   />
                 </div>
               </div>
@@ -414,130 +442,97 @@ function PlanSemanalInner() {
           })}
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* DRAWER DETALLE PLATO */}
-      {drawerOpen ? (
-        <div
-          onClick={() => setDrawerOpen(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,.55)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "flex-end",
-            padding: 12,
-            zIndex: 90,
-          }}
+function MealSelect(props: {
+  day: string;
+  meal: MealKey;
+  label: string;
+  tipoDia: "entreno" | "descanso";
+  value: string | null;
+  onChange: (v: string | null) => void;
+  platos: string[];
+
+  openDetail: Record<string, boolean>;
+  detailLoading: Record<string, boolean>;
+  detailError: Record<string, string>;
+  detailItems: Record<string, PlatoItemMacro[]>;
+  onToggleDetalle: (day: string, meal: MealKey, platoName: string | null) => void;
+  totalsFn: (items: PlatoItemMacro[]) => { kcal: number; p: number; c: number; f: number };
+}) {
+  const k = `${props.day}__${props.meal}`;
+  const isOpen = !!props.openDetail[k];
+  const isLoading = !!props.detailLoading[k];
+  const err = props.detailError[k] || "";
+  const items = props.detailItems[k] || [];
+  const t = props.totalsFn(items);
+
+  return (
+    <div>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div className="label" style={{ marginBottom: 0 }}>{props.label}</div>
+        <button
+          className="btn"
+          type="button"
+          onClick={() => props.onToggleDetalle(props.day, props.meal, props.value)}
+          style={{ padding: "8px 10px", borderRadius: 12 }}
         >
-          <div
-            className="card"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "100%", maxWidth: 720, maxHeight: "80vh", overflow: "auto" }}
-          >
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontWeight: 900 }}>🍽️ {drawerPlatoName ?? "Detalle del plato"}</div>
-              <button className="btn" onClick={() => setDrawerOpen(false)}>
-                Cerrar
-              </button>
+          {isOpen ? "Ocultar" : "Detalle"}
+        </button>
+      </div>
+
+      <select className="input" value={props.value ?? ""} onChange={(e) => props.onChange(e.target.value || null)}>
+        <option value="">—</option>
+        {props.platos.map((p) => (
+          <option key={p} value={p}>{p}</option>
+        ))}
+      </select>
+
+      {/* PANEL DESPLEGABLE */}
+      {isOpen ? (
+        <div className="card" style={{ marginTop: 10, background: "rgba(255,255,255,.03)" }}>
+          {isLoading ? <div className="small">Cargando detalle…</div> : null}
+
+          {!isLoading && err ? (
+            <div className="small" style={{ color: "var(--danger)" }}>
+              {err}
             </div>
+          ) : null}
 
-            {drawerLoading ? <div className="small" style={{ marginTop: 12 }}>Cargando…</div> : null}
-
-            {drawerError ? (
-              <div className="card" style={{ marginTop: 12, borderColor: "rgba(239,68,68,.55)" }}>
-                <div style={{ fontWeight: 900, color: "#ef4444" }}>Error</div>
-                <div className="small">{drawerError}</div>
+          {!isLoading && !err ? (
+            <>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <span className="badge">Kcal <b>{t.kcal}</b></span>
+                <span className="badge">Prot <b>{t.p}g</b></span>
+                <span className="badge">Carbs <b>{t.c}g</b></span>
+                <span className="badge">Grasa <b>{t.f}g</b></span>
               </div>
-            ) : null}
 
-            {!drawerLoading && !drawerError ? (
-              <>
-                <div className="card" style={{ marginTop: 12, background: "rgba(255,255,255,.03)" }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Totales</div>
-                  <div className="row">
-                    <span className="badge">
-                      Kcal <b>{drawerTotals.kcal}</b>
-                    </span>
-                    <span className="badge">
-                      Prot <b>{drawerTotals.p}g</b>
-                    </span>
-                    <span className="badge">
-                      Carbs <b>{drawerTotals.c}g</b>
-                    </span>
-                    <span className="badge">
-                      Grasa <b>{drawerTotals.f}g</b>
-                    </span>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-                  {drawerItems.map((x) => (
-                    <div key={x.plato_item_id} className="card" style={{ background: "rgba(255,255,255,.03)" }}>
-                      <div style={{ fontWeight: 900 }}>
-                        {x.order_idx}. {x.alimento} <span className="small">({x.grams} g)</span>
-                      </div>
-                      <div className="small" style={{ marginTop: 6, lineHeight: 1.45 }}>
-                        Kcal <b>{x.kcal}</b> · Prot <b>{x.prot_g}g</b> · Carbs <b>{x.carbs_g}g</b> · Grasa{" "}
-                        <b>{x.grasas_g}g</b>
-                        {x.notes ? <div style={{ marginTop: 6 }}>Nota: {x.notes}</div> : null}
-                      </div>
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                {items.map((x) => (
+                  <div key={x.plato_item_id} className="card" style={{ padding: 10, background: "rgba(255,255,255,.02)" }}>
+                    <div style={{ fontWeight: 800 }}>
+                      {x.order_idx}. {x.alimento} <span className="small">({x.grams} g)</span>
                     </div>
-                  ))}
-                  {!drawerItems.length ? (
-                    <div className="small">Este plato aún no tiene ingredientes cargados en plato_items.</div>
-                  ) : null}
-                </div>
+                    <div className="small" style={{ marginTop: 4, lineHeight: 1.45 }}>
+                      Kcal <b>{x.kcal}</b> · Prot <b>{x.prot_g}g</b> · Carbs <b>{x.carbs_g}g</b> · Grasa <b>{x.grasas_g}g</b>
+                      {x.notes ? <div style={{ marginTop: 6 }}>Nota: {x.notes}</div> : null}
+                    </div>
+                  </div>
+                ))}
 
-                <div className="small" style={{ marginTop: 12 }}>
-                  Consejo: si ves “sin ingredientes”, hay que cargar `plato_items` (ingredientes + gramos) para ese plato.
-                </div>
-              </>
-            ) : null}
-          </div>
+                {!items.length ? (
+                  <div className="small">
+                    Este plato no tiene ingredientes aún en <b>plato_items</b>.
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
   );
 }
-
-function SelectPlato({
-  label,
-  value,
-  onChange,
-  onView,
-  platos,
-}: {
-  label: string;
-  value: string | null;
-  onChange: (v: string | null) => void;
-  onView: () => void;
-  platos: string[];
-}) {
-  return (
-    <div>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <div className="label">{label}</div>
-
-        {/* ✅ Visible siempre */}
-        <button className="btn" type="button" onClick={onView} style={{ padding: "8px 10px", borderRadius: 12 }}>
-          Ver detalle
-        </button>
-      </div>
-
-      <select className="input" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-        <option value="">—</option>
-        {platos.map((p) => (
-          <option key={p} value={p}>
-            {p}
-          </option>
-        ))}
-      </select>
-
-      <div className="small" style={{ marginTop: 6, opacity: 0.85 }}>
-        Seleccionado: <b>{value ?? "—"}</b>
-      </div>
-    </div>
-  );
-}
-
