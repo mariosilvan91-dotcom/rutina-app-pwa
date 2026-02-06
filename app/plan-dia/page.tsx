@@ -5,22 +5,14 @@ import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
 import { todayISO } from "@/lib/date";
 
-type PlatoRow = {
-  id?: string;
+type Plato = {
   tipo_dia: "entreno" | "descanso";
   comida: "desayuno" | "comida" | "merienda" | "cena";
-  opcion: number | null;
   plato: string;
-  proteina?: string | null;
-  carbohidrato2?: string | null;
-  grasa?: string | null;
-  extra?: string | null;
-  extra2?: string | null;
-  clave?: string | null;
 };
 
-type DayPlan = {
-  day: string;
+type WeekDayPlan = {
+  day: string; // YYYY-MM-DD
   tipo_dia: "entreno" | "descanso";
   desayuno_plato: string | null;
   comida_plato: string | null;
@@ -28,209 +20,321 @@ type DayPlan = {
   cena_plato: string | null;
 };
 
-function pickN<T>(arr: T[], n: number) {
-  const copy = [...arr];
-  // shuffle simple
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy.slice(0, n);
+function ymd(d: Date) {
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+function startOfWeekMonday(d: Date) {
+  const x = new Date(d);
+  const day = (x.getDay() + 6) % 7;
+  x.setDate(x.getDate() - day);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
+
+function pickOne(arr: Plato[]) {
+  if (!arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 export default function PlanDiaPage() {
   return (
     <AuthGate>
-      <PlanDiaInner />
+      <PlanSemanalInner />
     </AuthGate>
   );
 }
 
-function PlanDiaInner() {
-  const [userId, setUserId] = useState<string>("");
-  const [day, setDay] = useState<string>(todayISO());
-  const [tipoDia, setTipoDia] = useState<"entreno" | "descanso">("entreno");
-  const [allPlatos, setAllPlatos] = useState<PlatoRow[]>([]);
+function PlanSemanalInner() {
+  const [userId, setUserId] = useState("");
+  const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<string>("");
+  const [status, setStatus] = useState("");
 
-  // Selecciones actuales (editable)
-  const [sel, setSel] = useState<DayPlan>({
-    day,
-    tipo_dia: "entreno",
-    desayuno_plato: null,
-    comida_plato: null,
-    merienda_plato: null,
-    cena_plato: null,
-  });
+  const weekStart = useMemo(() => startOfWeekMonday(anchor), [anchor]);
+  const weekStartISO = useMemo(() => ymd(weekStart), [weekStart]);
 
-  // Obtener user
+  const weekDays = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      return d;
+    });
+  }, [weekStart]);
+
+  const [platos, setPlatos] = useState<Plato[]>([]);
+  const [rows, setRows] = useState<WeekDayPlan[]>(
+    () =>
+      Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(weekStart);
+        d.setDate(weekStart.getDate() + i);
+        return {
+          day: ymd(d),
+          tipo_dia: "entreno",
+          desayuno_plato: null,
+          comida_plato: null,
+          merienda_plato: null,
+          cena_plato: null,
+        };
+      })
+  );
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
   }, []);
 
-  // Cargar platos
+  // Cargar platos desde stg_platos (asegúrate de que columnas están renombradas)
   useEffect(() => {
     (async () => {
       setLoading(true);
       setStatus("");
       const { data, error } = await supabase
         .from("stg_platos")
-        .select("tipo_dia,comida,opcion,plato,proteina,carbohidrato2,grasa,extra,extra2,clave");
+        .select("tipo_dia,comida,plato");
 
-      if (error) setStatus(error.message);
-      setAllPlatos((data ?? []) as PlatoRow[]);
+      if (error) {
+        setStatus(error.message);
+        setLoading(false);
+        return;
+      }
+      setPlatos((data ?? []) as any);
       setLoading(false);
     })();
   }, []);
 
-  // Cargar plan guardado del día (si existe)
+  // Cargar semana guardada
   useEffect(() => {
     if (!userId) return;
     (async () => {
+      setLoading(true);
+      setStatus("");
+
+      const from = ymd(weekStart);
+      const to = ymd(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6));
+
       const { data, error } = await supabase
-        .from("day_plan")
+        .from("week_plan_days")
         .select("day,tipo_dia,desayuno_plato,comida_plato,merienda_plato,cena_plato")
         .eq("user_id", userId)
-        .eq("day", day)
-        .maybeSingle();
+        .gte("day", from)
+        .lte("day", to)
+        .order("day", { ascending: true });
 
-      if (!error && data) {
-        setTipoDia((data.tipo_dia as any) ?? "entreno");
-        setSel({
-          day: String(data.day),
-          tipo_dia: (data.tipo_dia as any) ?? "entreno",
-          desayuno_plato: data.desayuno_plato ?? null,
-          comida_plato: data.comida_plato ?? null,
-          merienda_plato: data.merienda_plato ?? null,
-          cena_plato: data.cena_plato ?? null,
-        });
-      } else {
-        // reset al cambiar de día
-        setSel((prev) => ({ ...prev, day, tipo_dia: tipoDia }));
+      if (error) {
+        setStatus(error.message);
+        setLoading(false);
+        return;
       }
+
+      // Base week template
+      const base: WeekDayPlan[] = weekDays.map((d) => ({
+        day: ymd(d),
+        tipo_dia: "entreno",
+        desayuno_plato: null,
+        comida_plato: null,
+        merienda_plato: null,
+        cena_plato: null,
+      }));
+
+      // Merge saved rows
+      const map = new Map<string, any>();
+      (data ?? []).forEach((r: any) => map.set(String(r.day), r));
+
+      const merged = base.map((b) => {
+        const r = map.get(b.day);
+        if (!r) return b;
+        return {
+          day: b.day,
+          tipo_dia: (r.tipo_dia ?? "entreno") as any,
+          desayuno_plato: r.desayuno_plato ?? null,
+          comida_plato: r.comida_plato ?? null,
+          merienda_plato: r.merienda_plato ?? null,
+          cena_plato: r.cena_plato ?? null,
+        };
+      });
+
+      setRows(merged);
+      setLoading(false);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, day]);
+  }, [userId, weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Listas por comida según tipo_dia
-  const opts = useMemo(() => {
-    const base = allPlatos.filter((p) => p.tipo_dia === tipoDia);
-    const by = (comida: PlatoRow["comida"]) => base.filter((p) => p.comida === comida);
+  const options = useMemo(() => {
+    const by = (tipo: "entreno" | "descanso", comida: Plato["comida"]) =>
+      platos.filter((p) => p.tipo_dia === tipo && p.comida === comida);
+    return { by };
+  }, [platos]);
 
-    return {
-      desayuno: by("desayuno"),
-      comida: by("comida"),
-      merienda: by("merienda"),
-      cena: by("cena"),
-    };
-  }, [allPlatos, tipoDia]);
+  function setRow(idx: number, patch: Partial<WeekDayPlan>) {
+    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
 
-  // Generar automáticamente 5 opciones por comida y escoger 1 por defecto
-  const autoOptions = useMemo(() => {
-    return {
-      desayuno: pickN(opts.desayuno, 5),
-      comida: pickN(opts.comida, 5),
-      merienda: pickN(opts.merienda, 5),
-      cena: pickN(opts.cena, 5),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipoDia, allPlatos.length]);
+  function autogenerarSemana() {
+    setRows((prev) =>
+      prev.map((r) => {
+        const d = r.tipo_dia;
+        const des = pickOne(options.by(d, "desayuno"))?.plato ?? r.desayuno_plato;
+        const com = pickOne(options.by(d, "comida"))?.plato ?? r.comida_plato;
+        const mer = pickOne(options.by(d, "merienda"))?.plato ?? r.merienda_plato;
+        const cen = pickOne(options.by(d, "cena"))?.plato ?? r.cena_plato;
+        return { ...r, desayuno_plato: des, comida_plato: com, merienda_plato: mer, cena_plato: cen };
+      })
+    );
+    setStatus("Semana autogenerada ✅ (puedes ajustar a mano)");
+  }
 
-  // Cuando cambie tipoDia o día, si no hay selección, poner la primera opción
-  useEffect(() => {
-    setSel((prev) => {
-      const next = { ...prev, day, tipo_dia: tipoDia };
-      if (!next.desayuno_plato && autoOptions.desayuno[0]) next.desayuno_plato = autoOptions.desayuno[0].plato;
-      if (!next.comida_plato && autoOptions.comida[0]) next.comida_plato = autoOptions.comida[0].plato;
-      if (!next.merienda_plato && autoOptions.merienda[0]) next.merienda_plato = autoOptions.merienda[0].plato;
-      if (!next.cena_plato && autoOptions.cena[0]) next.cena_plato = autoOptions.cena[0].plato;
-      return next;
-    });
-  }, [autoOptions, day, tipoDia]);
-
-  async function savePlan() {
+  async function guardarSemana() {
     if (!userId) return;
+    setLoading(true);
     setStatus("");
 
-    const payload = {
+    const payload = rows.map((r) => ({
       user_id: userId,
-      day: sel.day,
-      tipo_dia: sel.tipo_dia,
-      desayuno_plato: sel.desayuno_plato,
-      comida_plato: sel.comida_plato,
-      merienda_plato: sel.merienda_plato,
-      cena_plato: sel.cena_plato,
+      week_start: weekStartISO,
+      day: r.day,
+      tipo_dia: r.tipo_dia,
+      desayuno_plato: r.desayuno_plato,
+      comida_plato: r.comida_plato,
+      merienda_plato: r.merienda_plato,
+      cena_plato: r.cena_plato,
       updated_at: new Date().toISOString(),
-    };
+    }));
 
     const { error } = await supabase
-      .from("day_plan")
+      .from("week_plan_days")
       .upsert(payload, { onConflict: "user_id,day" });
 
-    setStatus(error ? error.message : "Plan guardado ✅");
+    setLoading(false);
+    setStatus(error ? error.message : "Semana guardada ✅");
   }
 
-  function box(comidaLabel: string, key: "desayuno_plato" | "comida_plato" | "merienda_plato" | "cena_plato", list: PlatoRow[]) {
-    return (
-      <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ fontWeight: 900, marginBottom: 10 }}>{comidaLabel}</div>
-
-        <div className="label">Plato elegido</div>
-        <select
-          className="input"
-          value={sel[key] ?? ""}
-          onChange={(e) => setSel((p) => ({ ...p, [key]: e.target.value || null }))}
-        >
-          <option value="">—</option>
-          {list.map((p, i) => (
-            <option key={`${p.plato}-${i}`} value={p.plato}>
-              {p.plato}
-            </option>
-          ))}
-        </select>
-
-        <div className="small" style={{ marginTop: 10 }}>
-          (Te mostramos 5 opciones aleatorias. Si quieres, luego añadimos “filtro por macros” y cálculo de gramos.)
-        </div>
-      </div>
-    );
+  function shiftWeek(delta: number) {
+    const d = new Date(anchor);
+    d.setDate(d.getDate() + delta * 7);
+    setAnchor(d);
   }
+
+  const title = useMemo(() => {
+    const s = weekStart;
+    const e = new Date(weekStart);
+    e.setDate(weekStart.getDate() + 6);
+    const a = s.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+    const b = e.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+    return `${a} — ${b}`;
+  }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
       <div className="card">
-        <h1 className="h1">Plan día</h1>
-        <p className="p">Genera un plan según entreno/descanso y te deja modificarlo.</p>
+        <h1 className="h1">Plan semanal</h1>
+        <p className="p">Edita tu semana completa y se verá en “Hoy” automáticamente.</p>
 
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
-          <span className="badge">
-            Día:&nbsp;<b>{day}</b>
-          </span>
-
-          <div className="row" style={{ gap: 10 }}>
-            <button className={`btn ${tipoDia === "entreno" ? "primary" : ""}`} onClick={() => setTipoDia("entreno")}>
-              Entreno
-            </button>
-            <button className={`btn ${tipoDia === "descanso" ? "primary" : ""}`} onClick={() => setTipoDia("descanso")}>
-              Descanso
-            </button>
-          </div>
+          <button className="btn" onClick={() => shiftWeek(-1)}>←</button>
+          <span className="badge"><b>{title}</b></span>
+          <button className="btn" onClick={() => shiftWeek(1)}>→</button>
         </div>
 
         <div className="row" style={{ gap: 10, marginTop: 12 }}>
-          <button className="btn" onClick={() => setDay(todayISO())}>Ir a hoy</button>
-          <button className="btn primary" onClick={savePlan}>Guardar plan</button>
-          {status ? <span className="small" style={{ alignSelf: "center" }}>{status}</span> : null}
+          <button className="btn" onClick={() => setAnchor(new Date())}>Ir a hoy</button>
+          <button className="btn" onClick={autogenerarSemana}>Autogenerar semana</button>
+          <button className="btn primary" onClick={guardarSemana}>Guardar semana</button>
         </div>
 
-        {loading ? <div className="small" style={{ marginTop: 10 }}>Cargando platos…</div> : null}
+        {loading ? <div className="small" style={{ marginTop: 10 }}>Cargando…</div> : null}
+        {status ? <div className="small" style={{ marginTop: 10 }}>{status}</div> : null}
       </div>
 
-      {box("Desayuno", "desayuno_plato", autoOptions.desayuno)}
-      {box("Comida", "comida_plato", autoOptions.comida)}
-      {box("Merienda", "merienda_plato", autoOptions.merienda)}
-      {box("Cena", "cena_plato", autoOptions.cena)}
+      {/* Editor semana */}
+      <div className="card" style={{ marginTop: 12 }}>
+        <div style={{ fontWeight: 900, marginBottom: 10 }}>Editar días</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+          {rows.map((r, idx) => {
+            const d = weekDays[idx];
+            const label = `${DOW_ES[idx]} ${d.getDate()}`;
+
+            return (
+              <div key={r.day} className="card" style={{ padding: 12 }}>
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 900 }}>{label}</div>
+                  <span className="badge">{r.day}</span>
+                </div>
+
+                <div className="row" style={{ gap: 10, marginTop: 10 }}>
+                  <button
+                    className={`btn ${r.tipo_dia === "entreno" ? "primary" : ""}`}
+                    onClick={() => setRow(idx, { tipo_dia: "entreno" })}
+                  >
+                    Entreno
+                  </button>
+                  <button
+                    className={`btn ${r.tipo_dia === "descanso" ? "primary" : ""}`}
+                    onClick={() => setRow(idx, { tipo_dia: "descanso" })}
+                  >
+                    Descanso
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 10 }}>
+                  <SelectPlato
+                    label="Desayuno"
+                    value={r.desayuno_plato}
+                    onChange={(v) => setRow(idx, { desayuno_plato: v })}
+                    platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
+                  />
+                  <SelectPlato
+                    label="Comida"
+                    value={r.comida_plato}
+                    onChange={(v) => setRow(idx, { comida_plato: v })}
+                    platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
+                  />
+                  <SelectPlato
+                    label="Merienda"
+                    value={r.merienda_plato}
+                    onChange={(v) => setRow(idx, { merienda_plato: v })}
+                    platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
+                  />
+                  <SelectPlato
+                    label="Cena"
+                    value={r.cena_plato}
+                    onChange={(v) => setRow(idx, { cena_plato: v })}
+                    platos={options.by(r.tipo_dia, "cena").map((p) => p.plato)}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SelectPlato({
+  label,
+  value,
+  onChange,
+  platos,
+}: {
+  label: string;
+  value: string | null;
+  onChange: (v: string | null) => void;
+  platos: string[];
+}) {
+  return (
+    <div>
+      <div className="label">{label}</div>
+      <select className="input" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+        <option value="">—</option>
+        {platos.map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
