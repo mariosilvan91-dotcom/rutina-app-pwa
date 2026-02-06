@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
-import { todayISO } from "@/lib/date";
 
 type Plato = {
   tipo_dia: "entreno" | "descanso";
@@ -18,6 +17,21 @@ type WeekDayPlan = {
   comida_plato: string | null;
   merienda_plato: string | null;
   cena_plato: string | null;
+};
+
+type PlatoItemMacro = {
+  plato_item_id: string;
+  plato_id: string;
+  order_idx: number;
+  grams: number;
+  notes: string | null;
+  alimento_id: string;
+  alimento: string;
+  tipo: string | null;
+  kcal: number;
+  prot_g: number;
+  carbs_g: number;
+  grasas_g: number;
 };
 
 function ymd(d: Date) {
@@ -38,6 +52,10 @@ const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
 function pickOne(arr: Plato[]) {
   if (!arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function r1(n: number) {
+  return Math.round((Number(n) || 0) * 10) / 10;
 }
 
 export default function PlanDiaPage() {
@@ -82,18 +100,24 @@ function PlanSemanalInner() {
       })
   );
 
+  // Drawer detalle plato
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerPlatoName, setDrawerPlatoName] = useState<string | null>(null);
+  const [drawerPlatoId, setDrawerPlatoId] = useState<string | null>(null);
+  const [drawerItems, setDrawerItems] = useState<PlatoItemMacro[]>([]);
+  const [drawerError, setDrawerError] = useState<string>("");
+  const [drawerLoading, setDrawerLoading] = useState(false);
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
   }, []);
 
-  // Cargar platos desde stg_platos (asegúrate de que columnas están renombradas)
+  // Cargar platos desde stg_platos
   useEffect(() => {
     (async () => {
       setLoading(true);
       setStatus("");
-      const { data, error } = await supabase
-        .from("stg_platos")
-        .select("tipo_dia,comida,plato");
+      const { data, error } = await supabase.from("stg_platos").select("tipo_dia,comida,plato");
 
       if (error) {
         setStatus(error.message);
@@ -129,7 +153,6 @@ function PlanSemanalInner() {
         return;
       }
 
-      // Base week template
       const base: WeekDayPlan[] = weekDays.map((d) => ({
         day: ymd(d),
         tipo_dia: "entreno",
@@ -139,7 +162,6 @@ function PlanSemanalInner() {
         cena_plato: null,
       }));
 
-      // Merge saved rows
       const map = new Map<string, any>();
       (data ?? []).forEach((r: any) => map.set(String(r.day), r));
 
@@ -202,9 +224,7 @@ function PlanSemanalInner() {
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await supabase
-      .from("week_plan_days")
-      .upsert(payload, { onConflict: "user_id,day" });
+    const { error } = await supabase.from("week_plan_days").upsert(payload, { onConflict: "user_id,day" });
 
     setLoading(false);
     setStatus(error ? error.message : "Semana guardada ✅");
@@ -225,6 +245,65 @@ function PlanSemanalInner() {
     return `${a} — ${b}`;
   }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  async function openDetalle(platoName: string | null) {
+    if (!platoName) return;
+
+    setDrawerOpen(true);
+    setDrawerPlatoName(platoName);
+    setDrawerPlatoId(null);
+    setDrawerItems([]);
+    setDrawerError("");
+    setDrawerLoading(true);
+
+    try {
+      // 1) Buscar ID del plato por nombre (stg_platos)
+      const { data: pData, error: pErr } = await supabase
+        .from("stg_platos")
+        .select("id,plato")
+        .eq("plato", platoName)
+        .limit(1)
+        .maybeSingle();
+
+      if (pErr) throw pErr;
+      const pid = (pData as any)?.id as string | undefined;
+      if (!pid) {
+        setDrawerError("No encuentro el ID del plato. Revisa que stg_platos tenga columna id.");
+        setDrawerLoading(false);
+        return;
+      }
+      setDrawerPlatoId(pid);
+
+      // 2) Traer ingredientes + macros desde la vista
+      const { data: items, error: iErr } = await supabase
+        .from("v_plato_items_macros")
+        .select("*")
+        .eq("plato_id", pid)
+        .order("order_idx", { ascending: true });
+
+      if (iErr) throw iErr;
+
+      setDrawerItems((items ?? []) as any);
+    } catch (e: any) {
+      setDrawerError(e?.message ?? "Error cargando detalle del plato");
+    } finally {
+      setDrawerLoading(false);
+    }
+  }
+
+  const drawerTotals = useMemo(() => {
+    let kcal = 0,
+      p = 0,
+      c = 0,
+      f = 0;
+    for (const x of drawerItems) {
+      kcal += Number(x.kcal || 0);
+      p += Number(x.prot_g || 0);
+      c += Number(x.carbs_g || 0);
+      f += Number(x.grasas_g || 0);
+    }
+    return { kcal: r1(kcal), p: r1(p), c: r1(c), f: r1(f) };
+  }, [drawerItems]);
+
   return (
     <div>
       <div className="card">
@@ -232,15 +311,27 @@ function PlanSemanalInner() {
         <p className="p">Edita tu semana completa y se verá en “Hoy” automáticamente.</p>
 
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
-          <button className="btn" onClick={() => shiftWeek(-1)}>←</button>
-          <span className="badge"><b>{title}</b></span>
-          <button className="btn" onClick={() => shiftWeek(1)}>→</button>
+          <button className="btn" onClick={() => shiftWeek(-1)}>
+            ←
+          </button>
+          <span className="badge">
+            <b>{title}</b>
+          </span>
+          <button className="btn" onClick={() => shiftWeek(1)}>
+            →
+          </button>
         </div>
 
         <div className="row" style={{ gap: 10, marginTop: 12 }}>
-          <button className="btn" onClick={() => setAnchor(new Date())}>Ir a hoy</button>
-          <button className="btn" onClick={autogenerarSemana}>Autogenerar semana</button>
-          <button className="btn primary" onClick={guardarSemana}>Guardar semana</button>
+          <button className="btn" onClick={() => setAnchor(new Date())}>
+            Ir a hoy
+          </button>
+          <button className="btn" onClick={autogenerarSemana}>
+            Autogenerar semana
+          </button>
+          <button className="btn primary" onClick={guardarSemana}>
+            Guardar semana
+          </button>
         </div>
 
         {loading ? <div className="small" style={{ marginTop: 10 }}>Cargando…</div> : null}
@@ -283,24 +374,31 @@ function PlanSemanalInner() {
                     label="Desayuno"
                     value={r.desayuno_plato}
                     onChange={(v) => setRow(idx, { desayuno_plato: v })}
+                    onView={() => openDetalle(r.desayuno_plato)}
                     platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
                   />
+
                   <SelectPlato
                     label="Comida"
                     value={r.comida_plato}
                     onChange={(v) => setRow(idx, { comida_plato: v })}
+                    onView={() => openDetalle(r.comida_plato)}
                     platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
                   />
+
                   <SelectPlato
                     label="Merienda"
                     value={r.merienda_plato}
                     onChange={(v) => setRow(idx, { merienda_plato: v })}
+                    onView={() => openDetalle(r.merienda_plato)}
                     platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
                   />
+
                   <SelectPlato
                     label="Cena"
                     value={r.cena_plato}
                     onChange={(v) => setRow(idx, { cena_plato: v })}
+                    onView={() => openDetalle(r.cena_plato)}
                     platos={options.by(r.tipo_dia, "cena").map((p) => p.plato)}
                   />
                 </div>
@@ -309,6 +407,89 @@ function PlanSemanalInner() {
           })}
         </div>
       </div>
+
+      {/* DRAWER DETALLE PLATO */}
+      {drawerOpen ? (
+        <div
+          onClick={() => setDrawerOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.55)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "flex-end",
+            padding: 12,
+            zIndex: 90,
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 720, maxHeight: "80vh", overflow: "auto" }}
+          >
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontWeight: 900 }}>🍽️ {drawerPlatoName ?? "Detalle del plato"}</div>
+              <button className="btn" onClick={() => setDrawerOpen(false)}>
+                Cerrar
+              </button>
+            </div>
+
+            {drawerLoading ? <div className="small" style={{ marginTop: 12 }}>Cargando…</div> : null}
+
+            {drawerError ? (
+              <div className="card" style={{ marginTop: 12, borderColor: "rgba(239,68,68,.55)" }}>
+                <div style={{ fontWeight: 900, color: "#ef4444" }}>Error</div>
+                <div className="small">{drawerError}</div>
+              </div>
+            ) : null}
+
+            {!drawerLoading && !drawerError ? (
+              <>
+                <div className="card" style={{ marginTop: 12, background: "rgba(255,255,255,.03)" }}>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>Totales</div>
+                  <div className="row">
+                    <span className="badge">
+                      Kcal <b>{drawerTotals.kcal}</b>
+                    </span>
+                    <span className="badge">
+                      Prot <b>{drawerTotals.p}g</b>
+                    </span>
+                    <span className="badge">
+                      Carbs <b>{drawerTotals.c}g</b>
+                    </span>
+                    <span className="badge">
+                      Grasa <b>{drawerTotals.f}g</b>
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                  {drawerItems.map((x) => (
+                    <div key={x.plato_item_id} className="card" style={{ background: "rgba(255,255,255,.03)" }}>
+                      <div style={{ fontWeight: 900 }}>
+                        {x.order_idx}. {x.alimento} <span className="small">({x.grams} g)</span>
+                      </div>
+                      <div className="small" style={{ marginTop: 6, lineHeight: 1.45 }}>
+                        Kcal <b>{x.kcal}</b> · Prot <b>{x.prot_g}g</b> · Carbs <b>{x.carbs_g}g</b> · Grasa{" "}
+                        <b>{x.grasas_g}g</b>
+                        {x.notes ? <div style={{ marginTop: 6 }}>Nota: {x.notes}</div> : null}
+                      </div>
+                    </div>
+                  ))}
+                  {!drawerItems.length ? (
+                    <div className="small">Este plato aún no tiene ingredientes cargados en plato_items.</div>
+                  ) : null}
+                </div>
+
+                <div className="small" style={{ marginTop: 12 }}>
+                  Consejo: si ves “sin ingredientes”, hay que cargar `plato_items` (ingredientes + gramos) para ese plato.
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -317,16 +498,24 @@ function SelectPlato({
   label,
   value,
   onChange,
+  onView,
   platos,
 }: {
   label: string;
   value: string | null;
   onChange: (v: string | null) => void;
+  onView: () => void;
   platos: string[];
 }) {
   return (
     <div>
-      <div className="label">{label}</div>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div className="label">{label}</div>
+        <button className="btn" type="button" onClick={onView} disabled={!value}>
+          Ver detalle
+        </button>
+      </div>
+
       <select className="input" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
         <option value="">—</option>
         {platos.map((p) => (
