@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 type DayLog = {
-  day: string; // YYYY-MM-DD
+  day: string;
   gym: boolean | null;
   diet_ok: boolean | null;
   water_l: number | null;
@@ -19,6 +19,15 @@ type Settings = {
   sueno_obj_h: number;
 };
 
+type DayPlan = {
+  day: string; // YYYY-MM-DD
+  tipo_dia?: string | null;
+  desayuno_plato: string | null;
+  comida_plato: string | null;
+  merienda_plato: string | null;
+  cena_plato: string | null;
+};
+
 function ymd(d: Date) {
   const yy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -28,7 +37,7 @@ function ymd(d: Date) {
 
 function startOfWeekMonday(d: Date) {
   const x = new Date(d);
-  const day = (x.getDay() + 6) % 7; // lunes=0
+  const day = (x.getDay() + 6) % 7;
   x.setDate(x.getDate() - day);
   x.setHours(0, 0, 0, 0);
   return x;
@@ -66,7 +75,6 @@ function okGym(log: DayLog | undefined) {
 function okDiet(log: DayLog | undefined) {
   return log?.diet_ok === true;
 }
-
 function score(log: DayLog | undefined, s: Settings) {
   return (
     (okGym(log) ? 1 : 0) +
@@ -88,6 +96,7 @@ export default function HistoriaPage() {
     sueno_obj_h: 7,
   });
   const [logs, setLogs] = useState<DayLog[]>([]);
+  const [plans, setPlans] = useState<DayPlan[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -102,11 +111,17 @@ export default function HistoriaPage() {
     return { from: ymd(s), to: ymd(e), s, e };
   }, [tab, anchor]);
 
-  const map = useMemo(() => {
+  const logMap = useMemo(() => {
     const m = new Map<string, DayLog>();
     logs.forEach((l) => m.set(l.day, l));
     return m;
   }, [logs]);
+
+  const planMap = useMemo(() => {
+    const m = new Map<string, DayPlan>();
+    plans.forEach((p) => m.set(p.day, p));
+    return m;
+  }, [plans]);
 
   useEffect(() => {
     (async () => {
@@ -118,7 +133,7 @@ export default function HistoriaPage() {
         const userId = userRes.user?.id;
         if (!userId) throw new Error("No estás logueado.");
 
-        const [settingsRes, logsRes] = await Promise.all([
+        const [settingsRes, logsRes, plansRes] = await Promise.all([
           supabase
             .from("user_settings")
             .select("agua_obj_l,pasos_obj,sueno_obj_h")
@@ -127,6 +142,13 @@ export default function HistoriaPage() {
           supabase
             .from("day_logs")
             .select("day,gym,diet_ok,water_l,steps,sleep_h,notes,updated_at")
+            .eq("user_id", userId)
+            .gte("day", range.from)
+            .lte("day", range.to)
+            .order("day", { ascending: true }),
+          supabase
+            .from("day_plan")
+            .select("day,tipo_dia,desayuno_plato,comida_plato,merienda_plato,cena_plato,updated_at")
             .eq("user_id", userId)
             .gte("day", range.from)
             .lte("day", range.to)
@@ -143,6 +165,9 @@ export default function HistoriaPage() {
 
         if (logsRes.error) throw logsRes.error;
         setLogs((logsRes.data ?? []) as DayLog[]);
+
+        if (plansRes.error) throw plansRes.error;
+        setPlans((plansRes.data ?? []) as any);
       } catch (e: any) {
         setError(e?.message ?? "Error cargando histórico");
       } finally {
@@ -174,6 +199,23 @@ export default function HistoriaPage() {
     return { days, month: anchor.getMonth() };
   }, [anchor]);
 
+  const weekStats = useMemo(() => {
+    let gym = 0,
+      diet = 0,
+      water = 0,
+      steps = 0,
+      sleep = 0;
+    for (const d of weekDays) {
+      const log = logMap.get(ymd(d));
+      if (okGym(log)) gym++;
+      if (okDiet(log)) diet++;
+      if (okWater(log, settings)) water++;
+      if (okSteps(log, settings)) steps++;
+      if (okSleep(log, settings)) sleep++;
+    }
+    return { gym, diet, water, steps, sleep };
+  }, [weekDays, logMap, settings]);
+
   const title = useMemo(() => {
     const opts: Intl.DateTimeFormatOptions =
       tab === "week" ? { day: "2-digit", month: "short" } : { month: "long", year: "numeric" };
@@ -199,54 +241,24 @@ export default function HistoriaPage() {
     setAnchor(d);
   }
 
-  const weekStats = useMemo(() => {
-    let gym = 0,
-      diet = 0,
-      water = 0,
-      steps = 0,
-      sleep = 0;
-
-    for (const d of weekDays) {
-      const log = map.get(ymd(d));
-      if (okGym(log)) gym++;
-      if (okDiet(log)) diet++;
-      if (okWater(log, settings)) water++;
-      if (okSteps(log, settings)) steps++;
-      if (okSleep(log, settings)) sleep++;
-    }
-    return { gym, diet, water, steps, sleep };
-  }, [weekDays, map, settings]);
-
   return (
     <div>
       <h1 className="h1">Histórico</h1>
 
-      {/* Tabs */}
       <div className="row" style={{ gap: 10 }}>
-        <button
-          className={`btn ${tab === "week" ? "primary" : ""}`}
-          onClick={() => setTab("week")}
-        >
+        <button className={`btn ${tab === "week" ? "primary" : ""}`} onClick={() => setTab("week")}>
           Semana
         </button>
-        <button
-          className={`btn ${tab === "month" ? "primary" : ""}`}
-          onClick={() => setTab("month")}
-        >
+        <button className={`btn ${tab === "month" ? "primary" : ""}`} onClick={() => setTab("month")}>
           Mes
         </button>
       </div>
 
-      {/* Navegación fecha */}
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
         <button className="btn" onClick={() => (tab === "week" ? shiftWeek(-1) : shiftMonth(-1))}>
           ←
         </button>
-
-        <div style={{ fontWeight: 800, textAlign: "center", flex: 1, padding: "0 10px" }}>
-          {title}
-        </div>
-
+        <div style={{ fontWeight: 800, textAlign: "center", flex: 1, padding: "0 10px" }}>{title}</div>
         <button className="btn" onClick={() => (tab === "week" ? shiftWeek(1) : shiftMonth(1))}>
           →
         </button>
@@ -267,7 +279,6 @@ export default function HistoriaPage() {
 
       {loading ? <div className="small" style={{ marginTop: 12 }}>Cargando…</div> : null}
 
-      {/* VISTA SEMANA */}
       {!loading && tab === "week" ? (
         <>
           <div
@@ -280,7 +291,8 @@ export default function HistoriaPage() {
           >
             {weekDays.map((d, idx) => {
               const key = ymd(d);
-              const log = map.get(key);
+              const log = logMap.get(key);
+              const plan = planMap.get(key);
               const sc = score(log, settings);
               const today = key === ymd(new Date());
 
@@ -307,6 +319,26 @@ export default function HistoriaPage() {
                     <div>Pasos: {log?.steps ?? 0}/{settings.pasos_obj} {okSteps(log, settings) ? "✅" : ""}</div>
                     <div>Sueño: {log?.sleep_h ?? 0}/{settings.sueno_obj_h}h {okSleep(log, settings) ? "✅" : ""}</div>
                   </div>
+
+                  {/* ✅ Comidas del día */}
+                  {plan ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="label" style={{ marginBottom: 6 }}>🍽️ Comidas</div>
+                      <div className="small" style={{ lineHeight: 1.45 }}>
+                        {plan.desayuno_plato ? <div>• Desayuno: <b>{plan.desayuno_plato}</b></div> : null}
+                        {plan.comida_plato ? <div>• Comida: <b>{plan.comida_plato}</b></div> : null}
+                        {plan.merienda_plato ? <div>• Merienda: <b>{plan.merienda_plato}</b></div> : null}
+                        {plan.cena_plato ? <div>• Cena: <b>{plan.cena_plato}</b></div> : null}
+                        {!plan.desayuno_plato && !plan.comida_plato && !plan.merienda_plato && !plan.cena_plato ? (
+                          <div>— Sin plan guardado</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 10 }} className="small">
+                      🍽️ Sin plan guardado
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -325,7 +357,6 @@ export default function HistoriaPage() {
         </>
       ) : null}
 
-      {/* VISTA MES */}
       {!loading && tab === "month" ? (
         <>
           <div
@@ -355,14 +386,20 @@ export default function HistoriaPage() {
           >
             {monthGrid.days.map((d) => {
               const key = ymd(d);
-              const log = map.get(key);
+              const log = logMap.get(key);
+              const plan = planMap.get(key);
               const sc = score(log, settings);
               const inMonth = d.getMonth() === monthGrid.month;
               const today = key === ymd(new Date());
 
-              // color suave por score
               const bg =
                 sc >= 4 ? "rgba(34,197,94,.18)" : sc >= 2 ? "rgba(245,158,11,.14)" : "rgba(239,68,68,.12)";
+
+              const titleParts: string[] = [`${key} · ${sc}/5`];
+              if (plan?.desayuno_plato) titleParts.push(`Desayuno: ${plan.desayuno_plato}`);
+              if (plan?.comida_plato) titleParts.push(`Comida: ${plan.comida_plato}`);
+              if (plan?.merienda_plato) titleParts.push(`Merienda: ${plan.merienda_plato}`);
+              if (plan?.cena_plato) titleParts.push(`Cena: ${plan.cena_plato}`);
 
               return (
                 <div
@@ -374,7 +411,7 @@ export default function HistoriaPage() {
                     opacity: inMonth ? 1 : 0.35,
                     borderColor: today ? "rgba(255,255,255,.55)" : "var(--border)",
                   }}
-                  title={`${key} · ${sc}/5`}
+                  title={titleParts.join("\n")}
                 >
                   <div style={{ fontWeight: 900, fontSize: 12 }}>{d.getDate()}</div>
                   <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
@@ -384,6 +421,12 @@ export default function HistoriaPage() {
                     <Dot ok={okSteps(log, settings)} />
                     <Dot ok={okSleep(log, settings)} />
                   </div>
+                  {/* indicador pequeño si hay plan */}
+                  {plan ? (
+                    <div className="small" style={{ marginTop: 6, textAlign: "center", opacity: 0.8 }}>
+                      🍽️
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
