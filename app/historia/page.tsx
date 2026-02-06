@@ -95,6 +95,7 @@ export default function HistoriaPage() {
     pasos_obj: 8000,
     sueno_obj_h: 7,
   });
+
   const [logs, setLogs] = useState<DayLog[]>([]);
   const [plans, setPlans] = useState<DayPlan[]>([]);
   const [loading, setLoading] = useState(false);
@@ -139,6 +140,7 @@ export default function HistoriaPage() {
             .select("agua_obj_l,pasos_obj,sueno_obj_h")
             .eq("user_id", userId)
             .single(),
+
           supabase
             .from("day_logs")
             .select("day,gym,diet_ok,water_l,steps,sleep_h,notes,updated_at")
@@ -146,8 +148,10 @@ export default function HistoriaPage() {
             .gte("day", range.from)
             .lte("day", range.to)
             .order("day", { ascending: true }),
+
+          // ✅ IMPORTANTE: ahora la tabla correcta es week_plan_days
           supabase
-            .from("day_plan")
+            .from("week_plan_days")
             .select("day,tipo_dia,desayuno_plato,comida_plato,merienda_plato,cena_plato,updated_at")
             .eq("user_id", userId)
             .gte("day", range.from)
@@ -218,7 +222,9 @@ export default function HistoriaPage() {
 
   const title = useMemo(() => {
     const opts: Intl.DateTimeFormatOptions =
-      tab === "week" ? { day: "2-digit", month: "short" } : { month: "long", year: "numeric" };
+      tab === "week"
+        ? { day: "2-digit", month: "short" }
+        : { month: "long", year: "numeric" };
 
     if (tab === "week") {
       const s = startOfWeekMonday(anchor);
@@ -277,8 +283,13 @@ export default function HistoriaPage() {
         </div>
       ) : null}
 
-      {loading ? <div className="small" style={{ marginTop: 12 }}>Cargando…</div> : null}
+      {loading ? (
+        <div className="small" style={{ marginTop: 12 }}>
+          Cargando…
+        </div>
+      ) : null}
 
+      {/* ===================== SEMANA ===================== */}
       {!loading && tab === "week" ? (
         <>
           <div
@@ -315,39 +326,47 @@ export default function HistoriaPage() {
                   <div className="small" style={{ marginTop: 10, lineHeight: 1.45 }}>
                     <div>Gym: {okGym(log) ? "✅" : "—"}</div>
                     <div>Dieta: {okDiet(log) ? "✅" : "—"}</div>
-                    <div>Agua: {log?.water_l ?? 0}/{settings.agua_obj_l}L {okWater(log, settings) ? "✅" : ""}</div>
-                    <div>Pasos: {log?.steps ?? 0}/{settings.pasos_obj} {okSteps(log, settings) ? "✅" : ""}</div>
-                    <div>Sueño: {log?.sleep_h ?? 0}/{settings.sueno_obj_h}h {okSleep(log, settings) ? "✅" : ""}</div>
+                    <div>
+                      Agua: {log?.water_l ?? 0}/{settings.agua_obj_l}L {okWater(log, settings) ? "✅" : ""}
+                    </div>
+                    <div>
+                      Pasos: {log?.steps ?? 0}/{settings.pasos_obj} {okSteps(log, settings) ? "✅" : ""}
+                    </div>
+                    <div>
+                      Sueño: {log?.sleep_h ?? 0}/{settings.sueno_obj_h}h {okSleep(log, settings) ? "✅" : ""}
+                    </div>
                   </div>
 
-                  {/* ✅ Comidas del día */}
-                 {okDiet(log) ? (
-  plan ? (
-    <div style={{ marginTop: 10 }}>
-      <div className="label" style={{ marginBottom: 6 }}>🍽️ Lo que he comido</div>
-      <div className="small" style={{ lineHeight: 1.45 }}>
-        {plan.desayuno_plato ? <div>• Desayuno: <b>{plan.desayuno_plato}</b></div> : null}
-        {plan.comida_plato ? <div>• Comida: <b>{plan.comida_plato}</b></div> : null}
-        {plan.merienda_plato ? <div>• Merienda: <b>{plan.merienda_plato}</b></div> : null}
-        {plan.cena_plato ? <div>• Cena: <b>{plan.cena_plato}</b></div> : null}
-        {!plan.desayuno_plato && !plan.comida_plato && !plan.merienda_plato && !plan.cena_plato ? (
-          <div>— Dieta OK, pero el plan está vacío</div>
-        ) : null}
-      </div>
-    </div>
-  ) : (
-    <div style={{ marginTop: 10 }} className="small">
-      🍽️ Dieta OK, pero no hay plan guardado para este día
-    </div>
-  )
-) : null}
+                  {/* ✅ Comidas SOLO si Dieta = SI (y hay plan) */}
+                  {okDiet(log) && plan ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="label" style={{ marginBottom: 6 }}>
+                        🍽️ Lo que he comido
+                      </div>
+                      <div className="small" style={{ lineHeight: 1.45 }}>
+                        {plan.desayuno_plato ? (
+                          <div>
+                            • Desayuno: <b>{plan.desayuno_plato}</b>
+                          </div>
+                        ) : null}
+                        {plan.comida_plato ? (
+                          <div>
+                            • Comida: <b>{plan.comida_plato}</b>
+                          </div>
+                        ) : null}
+                        {plan.merienda_plato ? (
+                          <div>
+                            • Merienda: <b>{plan.merienda_plato}</b>
+                          </div>
+                        ) : null}
+                        {plan.cena_plato ? (
+                          <div>
+                            • Cena: <b>{plan.cena_plato}</b>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                  ) : (
-                    <div style={{ marginTop: 10 }} className="small">
-                      🍽️ Sin plan guardado
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               );
             })}
@@ -366,6 +385,7 @@ export default function HistoriaPage() {
         </>
       ) : null}
 
+      {/* ===================== MES ===================== */}
       {!loading && tab === "month" ? (
         <>
           <div
@@ -402,13 +422,11 @@ export default function HistoriaPage() {
               const today = key === ymd(new Date());
 
               const bg =
-                sc >= 4 ? "rgba(34,197,94,.18)" : sc >= 2 ? "rgba(245,158,11,.14)" : "rgba(239,68,68,.12)";
-
-              const titleParts: string[] = [`${key} · ${sc}/5`];
-              if (plan?.desayuno_plato) titleParts.push(`Desayuno: ${plan.desayuno_plato}`);
-              if (plan?.comida_plato) titleParts.push(`Comida: ${plan.comida_plato}`);
-              if (plan?.merienda_plato) titleParts.push(`Merienda: ${plan.merienda_plato}`);
-              if (plan?.cena_plato) titleParts.push(`Cena: ${plan.cena_plato}`);
+                sc >= 4
+                  ? "rgba(34,197,94,.18)"
+                  : sc >= 2
+                  ? "rgba(245,158,11,.14)"
+                  : "rgba(239,68,68,.12)";
 
               return (
                 <div
@@ -420,7 +438,7 @@ export default function HistoriaPage() {
                     opacity: inMonth ? 1 : 0.35,
                     borderColor: today ? "rgba(255,255,255,.55)" : "var(--border)",
                   }}
-                  title={titleParts.join("\n")}
+                  title={`${key} · ${sc}/5`}
                 >
                   <div style={{ fontWeight: 900, fontSize: 12 }}>{d.getDate()}</div>
                   <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
@@ -430,8 +448,9 @@ export default function HistoriaPage() {
                     <Dot ok={okSteps(log, settings)} />
                     <Dot ok={okSleep(log, settings)} />
                   </div>
-                  {/* indicador pequeño si hay plan */}
-                  {plan ? (
+
+                  {/* 🍽️ SOLO si Dieta=SI y hay plan */}
+                  {okDiet(log) && plan ? (
                     <div className="small" style={{ marginTop: 6, textAlign: "center", opacity: 0.8 }}>
                       🍽️
                     </div>
@@ -459,3 +478,4 @@ function Dot({ ok }: { ok: boolean }) {
     />
   );
 }
+
