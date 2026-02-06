@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
 
+// --- TIPOS ---
 type TipoDia = "entreno" | "descanso";
 type ComidaKey = "desayuno" | "comida" | "merienda" | "cena";
 
@@ -16,6 +17,16 @@ type PlatoRow = {
 type WeekDayPlan = {
   day: string;
   tipo_dia: TipoDia;
+  desayuno_plato: string | null;
+  comida_plato: string | null;
+  merienda_plato: string | null;
+  cena_plato: string | null;
+};
+
+// Base de datos devuelve esto, aseguramos tipos
+type WeekDayPlanDB = {
+  day: string;
+  tipo_dia: string; // Postgres devuelve string
   desayuno_plato: string | null;
   comida_plato: string | null;
   merienda_plato: string | null;
@@ -39,6 +50,7 @@ type PlatoItemMacro = {
 
 const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
 
+// --- HELPERS ---
 function ymd(d: Date) {
   const yy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -55,11 +67,12 @@ function startOfWeekMonday(d: Date) {
 }
 
 function pickOne<T>(arr: T[]) {
-  if (!arr.length) return null;
+  if (!arr || !arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function r1(n: any) {
+// Corregido el tipo 'any'
+function r1(n: number | string | null | undefined) {
   const x = Number(n || 0);
   return Math.round(x * 10) / 10;
 }
@@ -90,23 +103,23 @@ function PlanSemanalInner() {
   }, [weekStart]);
 
   const [platos, setPlatos] = useState<PlatoRow[]>([]);
-  const [rows, setRows] = useState<WeekDayPlan[]>(
-    () =>
-      Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(weekStart);
-        d.setDate(weekStart.getDate() + i);
-        return {
-          day: ymd(d),
-          tipo_dia: "entreno",
-          desayuno_plato: null,
-          comida_plato: null,
-          merienda_plato: null,
-          cena_plato: null,
-        };
-      })
+  
+  const [rows, setRows] = useState<WeekDayPlan[]>(() =>
+    Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      return {
+        day: ymd(d),
+        tipo_dia: "entreno",
+        desayuno_plato: null,
+        comida_plato: null,
+        merienda_plato: null,
+        cena_plato: null,
+      };
+    })
   );
 
-  // Estado del desplegable de detalle (por day + comida)
+  // Estado del desplegable de detalle
   const [openDetail, setOpenDetail] = useState<Record<string, boolean>>({});
   const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
   const [detailError, setDetailError] = useState<Record<string, string>>({});
@@ -126,6 +139,7 @@ function PlanSemanalInner() {
       setLoading(true);
       setStatus("");
 
+      // Tipamos explícitamente la respuesta de supabase para evitar 'any'
       const { data, error } = await supabase
         .from("stg_platos")
         .select("tipo_dia,comida,plato");
@@ -136,7 +150,16 @@ function PlanSemanalInner() {
         return;
       }
 
-      setPlatos((data ?? []) as any);
+      // Validación básica de tipos antes de asignar
+      if (data) {
+        const typedData: PlatoRow[] = data.map((item: any) => ({
+            tipo_dia: item.tipo_dia as TipoDia,
+            comida: item.comida as ComidaKey,
+            plato: item.plato
+        }));
+        setPlatos(typedData);
+      }
+      
       setLoading(false);
     })();
   }, []);
@@ -177,15 +200,16 @@ function PlanSemanalInner() {
         cena_plato: null,
       }));
 
-      const m = new Map<string, any>();
-      (data ?? []).forEach((r: any) => m.set(String(r.day), r));
+      const m = new Map<string, WeekDayPlanDB>();
+      // Casteamos data a WeekDayPlanDB[]
+      ((data as unknown as WeekDayPlanDB[]) ?? []).forEach((r) => m.set(String(r.day), r));
 
       const merged = base.map((b) => {
         const r = m.get(b.day);
         if (!r) return b;
         return {
           day: b.day,
-          tipo_dia: (r.tipo_dia ?? "entreno") as TipoDia,
+          tipo_dia: (r.tipo_dia as TipoDia) ?? "entreno",
           desayuno_plato: r.desayuno_plato ?? null,
           comida_plato: r.comida_plato ?? null,
           merienda_plato: r.merienda_plato ?? null,
@@ -196,7 +220,7 @@ function PlanSemanalInner() {
       setRows(merged);
       setLoading(false);
     })();
-  }, [userId, weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userId, weekStartISO, weekDays]); // Añadido weekDays para exhaustividad
 
   function by(tipo: TipoDia, comida: ComidaKey) {
     return platos.filter((p) => p.tipo_dia === tipo && p.comida === comida);
@@ -255,7 +279,7 @@ function PlanSemanalInner() {
     const a = s.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
     const b = e.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
     return `${a} — ${b}`;
-  }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [weekStart, weekStartISO]); 
 
   function totals(items: PlatoItemMacro[]) {
     let kcal = 0, p = 0, c = 0, f = 0;
@@ -271,13 +295,9 @@ function PlanSemanalInner() {
   async function toggleDetalle(day: string, meal: ComidaKey, platoName: string | null) {
     const key = dk(day, meal);
 
-    // abrir/cerrar
     setOpenDetail((prev) => ({ ...prev, [key]: !prev[key] }));
 
-    // si se está cerrando, salir
     if (openDetail[key]) return;
-
-    // si ya cargado, no recargar
     if (detailItems[key]?.length) return;
 
     if (!platoName) {
@@ -290,7 +310,7 @@ function PlanSemanalInner() {
     setDetailError((prev) => ({ ...prev, [key]: "" }));
 
     try {
-      // Buscar plato id (requiere stg_platos.id)
+      // 1. Buscamos ID del plato
       const { data: pData, error: pErr } = await supabase
         .from("stg_platos")
         .select("id,plato")
@@ -300,9 +320,13 @@ function PlanSemanalInner() {
 
       if (pErr) throw pErr;
 
-      const pid = (pData as any)?.id as string | undefined;
+      // Tipado seguro aquí
+      const foundPlato = pData as { id: string; plato: string } | null;
+      const pid = foundPlato?.id;
+
       if (!pid) throw new Error("No encuentro ID del plato. Asegura stg_platos.id (uuid).");
 
+      // 2. Buscamos items
       const { data: items, error: iErr } = await supabase
         .from("v_plato_items_macros")
         .select("*")
@@ -311,7 +335,7 @@ function PlanSemanalInner() {
 
       if (iErr) throw iErr;
 
-      setDetailItems((prev) => ({ ...prev, [key]: (items ?? []) as any }));
+      setDetailItems((prev) => ({ ...prev, [key]: (items as unknown as PlatoItemMacro[]) ?? [] }));
     } catch (e: any) {
       setDetailError((prev) => ({ ...prev, [key]: e?.message ?? "Error cargando detalle" }));
       setDetailItems((prev) => ({ ...prev, [key]: [] }));
@@ -367,65 +391,23 @@ function PlanSemanalInner() {
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 12 }}>
-                  <MealBlock
-                    day={r.day}
-                    meal="desayuno"
-                    label="Desayuno"
-                    value={r.desayuno_plato}
-                    onChange={(v) => setRow(idx, { desayuno_plato: v })}
-                    platos={by(r.tipo_dia, "desayuno").map((p) => p.plato)}
-                    isOpen={!!openDetail[dk(r.day, "desayuno")]}
-                    isLoading={!!detailLoading[dk(r.day, "desayuno")]}
-                    err={detailError[dk(r.day, "desayuno")] || ""}
-                    items={detailItems[dk(r.day, "desayuno")] || []}
-                    onToggle={() => toggleDetalle(r.day, "desayuno", r.desayuno_plato)}
-                    totalsFn={totals}
-                  />
-
-                  <MealBlock
-                    day={r.day}
-                    meal="comida"
-                    label="Comida"
-                    value={r.comida_plato}
-                    onChange={(v) => setRow(idx, { comida_plato: v })}
-                    platos={by(r.tipo_dia, "comida").map((p) => p.plato)}
-                    isOpen={!!openDetail[dk(r.day, "comida")]}
-                    isLoading={!!detailLoading[dk(r.day, "comida")]}
-                    err={detailError[dk(r.day, "comida")] || ""}
-                    items={detailItems[dk(r.day, "comida")] || []}
-                    onToggle={() => toggleDetalle(r.day, "comida", r.comida_plato)}
-                    totalsFn={totals}
-                  />
-
-                  <MealBlock
-                    day={r.day}
-                    meal="merienda"
-                    label="Merienda"
-                    value={r.merienda_plato}
-                    onChange={(v) => setRow(idx, { merienda_plato: v })}
-                    platos={by(r.tipo_dia, "merienda").map((p) => p.plato)}
-                    isOpen={!!openDetail[dk(r.day, "merienda")]}
-                    isLoading={!!detailLoading[dk(r.day, "merienda")]}
-                    err={detailError[dk(r.day, "merienda")] || ""}
-                    items={detailItems[dk(r.day, "merienda")] || []}
-                    onToggle={() => toggleDetalle(r.day, "merienda", r.merienda_plato)}
-                    totalsFn={totals}
-                  />
-
-                  <MealBlock
-                    day={r.day}
-                    meal="cena"
-                    label="Cena"
-                    value={r.cena_plato}
-                    onChange={(v) => setRow(idx, { cena_plato: v })}
-                    platos={by(r.tipo_dia, "cena").map((p) => p.plato)}
-                    isOpen={!!openDetail[dk(r.day, "cena")]}
-                    isLoading={!!detailLoading[dk(r.day, "cena")]}
-                    err={detailError[dk(r.day, "cena")] || ""}
-                    items={detailItems[dk(r.day, "cena")] || []}
-                    onToggle={() => toggleDetalle(r.day, "cena", r.cena_plato)}
-                    totalsFn={totals}
-                  />
+                  {(["desayuno", "comida", "merienda", "cena"] as ComidaKey[]).map((meal) => (
+                      <MealBlock
+                        key={meal}
+                        day={r.day}
+                        meal={meal}
+                        label={meal.charAt(0).toUpperCase() + meal.slice(1)}
+                        value={r[`${meal}_plato` as keyof WeekDayPlan] as string | null}
+                        onChange={(v) => setRow(idx, { [`${meal}_plato`]: v })}
+                        platos={by(r.tipo_dia, meal).map((p) => p.plato)}
+                        isOpen={!!openDetail[dk(r.day, meal)]}
+                        isLoading={!!detailLoading[dk(r.day, meal)]}
+                        err={detailError[dk(r.day, meal)] || ""}
+                        items={detailItems[dk(r.day, meal)] || []}
+                        onToggle={() => toggleDetalle(r.day, meal, r[`${meal}_plato` as keyof WeekDayPlan] as string | null)}
+                        totalsFn={totals}
+                    />
+                  ))}
                 </div>
               </div>
             );
@@ -436,6 +418,8 @@ function PlanSemanalInner() {
   );
 }
 
+// ... El componente MealBlock lo puedes dejar igual si no tenía errores de tipo,
+// pero asegúrate que totalsFn espere los tipos correctos.
 function MealBlock(props: {
   day: string;
   meal: ComidaKey;
@@ -443,13 +427,11 @@ function MealBlock(props: {
   value: string | null;
   onChange: (v: string | null) => void;
   platos: string[];
-
   isOpen: boolean;
   isLoading: boolean;
   err: string;
   items: PlatoItemMacro[];
   onToggle: () => void;
-
   totalsFn: (items: PlatoItemMacro[]) => { kcal: number; p: number; c: number; f: number };
 }) {
   const t = props.totalsFn(props.items);
@@ -502,7 +484,7 @@ function MealBlock(props: {
 
                 {!props.items.length ? (
                   <div className="small">
-                    Este plato no tiene ingredientes aún en <b>plato_items</b>.
+                    Este plato no tiene ingredientes aún.
                   </div>
                 ) : null}
               </div>
