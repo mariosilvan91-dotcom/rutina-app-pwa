@@ -26,10 +26,9 @@ function ymd(d: Date) {
   return `${yy}-${mm}-${dd}`;
 }
 
-// Semana empieza en lunes
 function startOfWeekMonday(d: Date) {
   const x = new Date(d);
-  const day = (x.getDay() + 6) % 7; // 0 = lunes
+  const day = (x.getDay() + 6) % 7; // lunes=0
   x.setDate(x.getDate() - day);
   x.setHours(0, 0, 0, 0);
   return x;
@@ -67,6 +66,7 @@ function okGym(log: DayLog | undefined) {
 function okDiet(log: DayLog | undefined) {
   return log?.diet_ok === true;
 }
+
 function score(log: DayLog | undefined, s: Settings) {
   return (
     (okGym(log) ? 1 : 0) +
@@ -79,7 +79,7 @@ function score(log: DayLog | undefined, s: Settings) {
 
 const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
 
-export default function HistoryPage() {
+export default function HistoriaPage() {
   const [tab, setTab] = useState<"week" | "month">("week");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [settings, setSettings] = useState<Settings>({
@@ -127,7 +127,7 @@ export default function HistoryPage() {
           supabase
             .from("day_logs")
             .select("day,gym,diet_ok,water_l,steps,sleep_h,notes,updated_at")
-            .eq("user_id", userId) // ✅ importante
+            .eq("user_id", userId)
             .gte("day", range.from)
             .lte("day", range.to)
             .order("day", { ascending: true }),
@@ -174,29 +174,9 @@ export default function HistoryPage() {
     return { days, month: anchor.getMonth() };
   }, [anchor]);
 
-  const weekStats = useMemo(() => {
-    let gym = 0,
-      diet = 0,
-      water = 0,
-      steps = 0,
-      sleep = 0;
-
-    for (const d of weekDays) {
-      const log = map.get(ymd(d));
-      if (okGym(log)) gym++;
-      if (okDiet(log)) diet++;
-      if (okWater(log, settings)) water++;
-      if (okSteps(log, settings)) steps++;
-      if (okSleep(log, settings)) sleep++;
-    }
-    return { gym, diet, water, steps, sleep };
-  }, [weekDays, map, settings]);
-
   const title = useMemo(() => {
     const opts: Intl.DateTimeFormatOptions =
-      tab === "week"
-        ? { day: "2-digit", month: "short" }
-        : { month: "long", year: "numeric" };
+      tab === "week" ? { day: "2-digit", month: "short" } : { month: "long", year: "numeric" };
 
     if (tab === "week") {
       const s = startOfWeekMonday(anchor);
@@ -219,180 +199,197 @@ export default function HistoryPage() {
     setAnchor(d);
   }
 
+  const weekStats = useMemo(() => {
+    let gym = 0,
+      diet = 0,
+      water = 0,
+      steps = 0,
+      sleep = 0;
+
+    for (const d of weekDays) {
+      const log = map.get(ymd(d));
+      if (okGym(log)) gym++;
+      if (okDiet(log)) diet++;
+      if (okWater(log, settings)) water++;
+      if (okSteps(log, settings)) steps++;
+      if (okSleep(log, settings)) sleep++;
+    }
+    return { gym, diet, water, steps, sleep };
+  }, [weekDays, map, settings]);
+
   return (
-    <div className="min-h-screen">
-      {/* ✅ Wrapper para encuadre móvil */}
-      <div className="mx-auto w-full max-w-md px-4 pb-24 pt-4">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-bold">Histórico</h1>
-          <div className="flex gap-2 rounded-xl bg-gray-100 p-1">
-            <button
-              className={`px-3 py-1.5 text-sm rounded-lg ${
-                tab === "week" ? "bg-white shadow" : ""
-              }`}
-              onClick={() => setTab("week")}
-            >
-              Semana
-            </button>
-            <button
-              className={`px-3 py-1.5 text-sm rounded-lg ${
-                tab === "month" ? "bg-white shadow" : ""
-              }`}
-              onClick={() => setTab("month")}
-            >
-              Mes
-            </button>
-          </div>
-        </div>
+    <div>
+      <h1 className="h1">Histórico</h1>
 
-        <div className="mt-3 flex items-center justify-between">
-          <button
-            className="rounded-xl border px-3 py-2"
-            onClick={() => (tab === "week" ? shiftWeek(-1) : shiftMonth(-1))}
-          >
-            ←
-          </button>
-
-          <div className="text-sm font-semibold text-center">{title}</div>
-
-          <button
-            className="rounded-xl border px-3 py-2"
-            onClick={() => (tab === "week" ? shiftWeek(1) : shiftMonth(1))}
-          >
-            →
-          </button>
-        </div>
-
-        <div className="mt-2">
-          <button className="text-sm underline" onClick={() => setAnchor(new Date())}>
-            Ir a hoy
-          </button>
-        </div>
-
-        {error ? (
-          <div className="mt-4 rounded-xl border border-red-300 bg-red-50 p-3 text-sm">
-            {error}
-          </div>
-        ) : null}
-
-        {loading ? (
-          <div className="mt-4 text-sm opacity-70">Cargando…</div>
-        ) : tab === "week" ? (
-          <>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              {weekDays.map((d, idx) => {
-                const key = ymd(d);
-                const log = map.get(key);
-                const sc = score(log, settings);
-                const today = key === ymd(new Date());
-
-                const badge =
-                  sc >= 4
-                    ? "bg-green-100"
-                    : sc >= 2
-                    ? "bg-yellow-100"
-                    : "bg-red-100";
-
-                return (
-                  <div
-                    key={key}
-                    className={`rounded-2xl border p-3 ${today ? "border-black" : ""}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold">
-                        {DOW_ES[idx]} {d.getDate()}
-                      </div>
-                      <div className={`rounded-full px-2 py-0.5 text-xs ${badge}`}>
-                        {sc}/5
-                      </div>
-                    </div>
-
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                      <Pill label="Gym" ok={okGym(log)} />
-                      <Pill label="Dieta" ok={okDiet(log)} />
-                      <Pill
-                        label={`Agua ${log?.water_l ?? 0}/${settings.agua_obj_l}L`}
-                        ok={okWater(log, settings)}
-                      />
-                      <Pill
-                        label={`Pasos ${log?.steps ?? 0}/${settings.pasos_obj}`}
-                        ok={okSteps(log, settings)}
-                      />
-                      <Pill
-                        label={`Sueño ${log?.sleep_h ?? 0}/${settings.sueno_obj_h}h`}
-                        ok={okSleep(log, settings)}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-5 rounded-2xl border p-4">
-              <div className="text-sm font-semibold">Resumen semanal</div>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                <div>Gym: {weekStats.gym}/7</div>
-                <div>Dieta: {weekStats.diet}/7</div>
-                <div>Agua OK: {weekStats.water}/7</div>
-                <div>Pasos OK: {weekStats.steps}/7</div>
-                <div>Sueño OK: {weekStats.sleep}/7</div>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="mt-4 grid grid-cols-7 gap-2 text-center text-xs font-semibold opacity-70">
-              {DOW_ES.map((d) => (
-                <div key={d}>{d}</div>
-              ))}
-            </div>
-
-            <div className="mt-2 grid grid-cols-7 gap-2">
-              {monthGrid.days.map((d) => {
-                const key = ymd(d);
-                const log = map.get(key);
-                const sc = score(log, settings);
-                const inMonth = d.getMonth() === monthGrid.month;
-                const today = key === ymd(new Date());
-
-                const color =
-                  sc >= 4
-                    ? "bg-green-100"
-                    : sc >= 2
-                    ? "bg-yellow-100"
-                    : "bg-red-100";
-
-                return (
-                  <div
-                    key={key}
-                    className={`aspect-square rounded-xl border p-1 ${
-                      inMonth ? "" : "opacity-40"
-                    } ${today ? "border-black" : ""} ${color}`}
-                    title={`${key} · ${sc}/5`}
-                  >
-                    <div className="text-xs font-semibold">{d.getDate()}</div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      <Dot ok={okGym(log)} />
-                      <Dot ok={okDiet(log)} />
-                      <Dot ok={okWater(log, settings)} />
-                      <Dot ok={okSteps(log, settings)} />
-                      <Dot ok={okSleep(log, settings)} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
+      {/* Tabs */}
+      <div className="row" style={{ gap: 10 }}>
+        <button
+          className={`btn ${tab === "week" ? "primary" : ""}`}
+          onClick={() => setTab("week")}
+        >
+          Semana
+        </button>
+        <button
+          className={`btn ${tab === "month" ? "primary" : ""}`}
+          onClick={() => setTab("month")}
+        >
+          Mes
+        </button>
       </div>
-    </div>
-  );
-}
 
-function Pill({ label, ok }: { label: string; ok: boolean }) {
-  return (
-    <div className={`rounded-lg px-2 py-1 ${ok ? "bg-green-100" : "bg-gray-100"}`}>
-      <span className="font-medium">{label}</span> {ok ? "✅" : "—"}
+      {/* Navegación fecha */}
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+        <button className="btn" onClick={() => (tab === "week" ? shiftWeek(-1) : shiftMonth(-1))}>
+          ←
+        </button>
+
+        <div style={{ fontWeight: 800, textAlign: "center", flex: 1, padding: "0 10px" }}>
+          {title}
+        </div>
+
+        <button className="btn" onClick={() => (tab === "week" ? shiftWeek(1) : shiftMonth(1))}>
+          →
+        </button>
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <button className="btn" onClick={() => setAnchor(new Date())}>
+          Ir a hoy
+        </button>
+      </div>
+
+      {error ? (
+        <div className="card" style={{ borderColor: "rgba(239,68,68,.55)", marginTop: 12 }}>
+          <div style={{ color: "#ef4444", fontWeight: 800 }}>Error</div>
+          <div className="p">{error}</div>
+        </div>
+      ) : null}
+
+      {loading ? <div className="small" style={{ marginTop: 12 }}>Cargando…</div> : null}
+
+      {/* VISTA SEMANA */}
+      {!loading && tab === "week" ? (
+        <>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: 12,
+              marginTop: 14,
+            }}
+          >
+            {weekDays.map((d, idx) => {
+              const key = ymd(d);
+              const log = map.get(key);
+              const sc = score(log, settings);
+              const today = key === ymd(new Date());
+
+              return (
+                <div
+                  key={key}
+                  className="card"
+                  style={{
+                    borderColor: today ? "rgba(255,255,255,.55)" : "var(--border)",
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontWeight: 900 }}>
+                      {DOW_ES[idx]} {d.getDate()}
+                    </div>
+                    <span className="badge">{sc}/5</span>
+                  </div>
+
+                  <div className="small" style={{ marginTop: 10, lineHeight: 1.45 }}>
+                    <div>Gym: {okGym(log) ? "✅" : "—"}</div>
+                    <div>Dieta: {okDiet(log) ? "✅" : "—"}</div>
+                    <div>Agua: {log?.water_l ?? 0}/{settings.agua_obj_l}L {okWater(log, settings) ? "✅" : ""}</div>
+                    <div>Pasos: {log?.steps ?? 0}/{settings.pasos_obj} {okSteps(log, settings) ? "✅" : ""}</div>
+                    <div>Sueño: {log?.sleep_h ?? 0}/{settings.sueno_obj_h}h {okSleep(log, settings) ? "✅" : ""}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="card" style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>Resumen semanal</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <div>Gym: {weekStats.gym}/7</div>
+              <div>Dieta: {weekStats.diet}/7</div>
+              <div>Agua OK: {weekStats.water}/7</div>
+              <div>Pasos OK: {weekStats.steps}/7</div>
+              <div>Sueño OK: {weekStats.sleep}/7</div>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {/* VISTA MES */}
+      {!loading && tab === "month" ? (
+        <>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+              gap: 8,
+              marginTop: 14,
+              textAlign: "center",
+              fontSize: 12,
+              color: "var(--muted)",
+              fontWeight: 800,
+            }}
+          >
+            {DOW_ES.map((d) => (
+              <div key={d}>{d}</div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+              gap: 8,
+              marginTop: 8,
+            }}
+          >
+            {monthGrid.days.map((d) => {
+              const key = ymd(d);
+              const log = map.get(key);
+              const sc = score(log, settings);
+              const inMonth = d.getMonth() === monthGrid.month;
+              const today = key === ymd(new Date());
+
+              // color suave por score
+              const bg =
+                sc >= 4 ? "rgba(34,197,94,.18)" : sc >= 2 ? "rgba(245,158,11,.14)" : "rgba(239,68,68,.12)";
+
+              return (
+                <div
+                  key={key}
+                  className="card"
+                  style={{
+                    padding: 8,
+                    background: bg,
+                    opacity: inMonth ? 1 : 0.35,
+                    borderColor: today ? "rgba(255,255,255,.55)" : "var(--border)",
+                  }}
+                  title={`${key} · ${sc}/5`}
+                >
+                  <div style={{ fontWeight: 900, fontSize: 12 }}>{d.getDate()}</div>
+                  <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+                    <Dot ok={okGym(log)} />
+                    <Dot ok={okDiet(log)} />
+                    <Dot ok={okWater(log, settings)} />
+                    <Dot ok={okSteps(log, settings)} />
+                    <Dot ok={okSleep(log, settings)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -400,7 +397,13 @@ function Pill({ label, ok }: { label: string; ok: boolean }) {
 function Dot({ ok }: { ok: boolean }) {
   return (
     <span
-      className={`inline-block h-2 w-2 rounded-full ${ok ? "bg-black" : "bg-black/20"}`}
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+        display: "inline-block",
+        background: ok ? "rgba(232,239,255,.95)" : "rgba(232,239,255,.20)",
+      }}
     />
   );
 }
