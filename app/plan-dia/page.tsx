@@ -75,7 +75,7 @@ function PlanDiaInner() {
       setLoading(true);
       setStatus("");
       const { data, error } = await supabase
-        .from("platos_auto")
+        .from("stg_platos")
         .select("tipo_dia,comida,opcion,plato,proteina,carbohidrato2,grasa,extra,extra2,clave");
 
       if (error) setStatus(error.message);
