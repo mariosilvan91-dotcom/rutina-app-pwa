@@ -1,7 +1,4 @@
 "use client";
-import Link from "next/link";
-
-<Link className="btn" href="/recetas/nueva">+ Nueva receta</Link>
 
 import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
