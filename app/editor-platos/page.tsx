@@ -28,13 +28,13 @@ export default function EditorPlatos() {
   async function fetchInitialData() {
     const { data: p } = await supabase.from("stg_platos").select("*").order("plato");
     // Traemos explícitamente la columna de la ración
-   const { data: f } = await supabase
+  const { data: f, error: fErr } = await supabase
   .from("foods_base")
   .select("id, name, default_portion_g")
-  .order("name");
-    if (p) setPlatos(p);
-    if (f) setFoods(f);
-  }
+  .order("name", { ascending: true });
+
+if (fErr) console.error(fErr);
+if (f) setFoods(f);
 
   useEffect(() => {
     if (selectedPlato) fetchItems();
