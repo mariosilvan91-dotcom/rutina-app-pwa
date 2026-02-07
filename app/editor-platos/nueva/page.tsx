@@ -1,22 +1,30 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
 
-type Food = {
+type TipoDia = "entreno" | "descanso";
+type Comida = "desayuno" | "comida" | "merienda" | "cena";
+
+type FoodOption = {
   id: string;
   name: string;
-  kcal_100: number;
-  prot_100: number;
-  carb_100: number;
-  fat_100: number;
-  ration_norm: number | null;
+  default_portion_g: number | null;
 };
 
 function clean(s: string) {
   return s.trim().replace(/\s+/g, " ");
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState<T>(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
 }
 
 export default function NuevaRecetaPage() {
@@ -28,17 +36,158 @@ export default function NuevaRecetaPage() {
 }
 
 function NuevaRecetaInner() {
-  const [ingredient, setIngredient] = useState("");
-  const [results, setResults] = useState<Food[]>([]);
-  const [open, setOpen] = useState(false);
+  const [plato, setPlato] = useState("");
 
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiData, setAiData] = useState<any>(null);
+  // Si tu tabla stg_platos NO tiene estas columnas, dímelo y las quito.
+  const [tipoDia, setTipoDia] = useState<TipoDia>("entreno");
+  const [comida, setComida] = useState<Comida>("comida");
+
+  const [i1, setI1] = useState("");
+  const [i2, setI2] = useState("");
+  const [i3, setI3] = useState("");
+  const [i4, setI4] = useState("");
+  const [i5, setI5] = useState("");
+
+  const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
+  async function guardar() {
+    setMsg("");
+    const platoClean = clean(plato);
+    if (!platoClean) {
+      setMsg("El nombre del plato es obligatorio.");
+      return;
+    }
+
+    setLoading(true);
+
+    const payload: any = {
+      plato: platoClean,
+      tipo_dia: tipoDia,
+      comida,
+      ingrediente_1: clean(i1) || null,
+      ingrediente_2: clean(i2) || null,
+      ingrediente_3: clean(i3) || null,
+      ingrediente_4: clean(i4) || null,
+      ingrediente_5: clean(i5) || null,
+    };
+
+    const { error } = await supabase.from("stg_platos").insert(payload);
+
+    setLoading(false);
+
+    if (error) {
+      setMsg("Error guardando receta: " + error.message);
+      return;
+    }
+
+    setMsg("Receta guardada ✅");
+    setPlato("");
+    setI1("");
+    setI2("");
+    setI3("");
+    setI4("");
+    setI5("");
+  }
+
+  return (
+    <div className="stack">
+      <div className="card">
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <h1 className="h1" style={{ margin: 0 }}>Nueva receta</h1>
+          <Link className="btn" href="/recetas">← Volver</Link>
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          <div>
+            <label className="small">Nombre del plato *</label>
+            <input
+              className="input"
+              value={plato}
+              onChange={(e) => setPlato(e.target.value)}
+              placeholder="Ej: Pollo con arroz y verduras"
+            />
+          </div>
+
+          <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <label className="small">Tipo día</label>
+              <select className="input" value={tipoDia} onChange={(e) => setTipoDia(e.target.value as TipoDia)}>
+                <option value="entreno">entreno</option>
+                <option value="descanso">descanso</option>
+              </select>
+            </div>
+
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <label className="small">Comida</label>
+              <select className="input" value={comida} onChange={(e) => setComida(e.target.value as Comida)}>
+                <option value="desayuno">desayuno</option>
+                <option value="comida">comida</option>
+                <option value="merienda">merienda</option>
+                <option value="cena">cena</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="card" style={{ background: "rgba(255,255,255,0.04)" }}>
+            <div className="h3">Ingredientes (autocompletar)</div>
+
+            <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
+              <FoodAutocomplete label="Ingrediente 1" value={i1} onChange={setI1} />
+              <FoodAutocomplete label="Ingrediente 2" value={i2} onChange={setI2} />
+              <FoodAutocomplete label="Ingrediente 3" value={i3} onChange={setI3} />
+              <FoodAutocomplete label="Ingrediente 4" value={i4} onChange={setI4} />
+              <FoodAutocomplete label="Ingrediente 5" value={i5} onChange={setI5} />
+            </div>
+
+            <div className="small muted" style={{ marginTop: 8 }}>
+              Escribe y selecciona de la lista para que coincida con <b>foods_base.name</b>.
+            </div>
+          </div>
+
+          <div className="row" style={{ gap: 10 }}>
+            <button className="btn primary" onClick={guardar} disabled={loading}>
+              {loading ? "Guardando..." : "Guardar receta"}
+            </button>
+
+            <button
+              className="btn"
+              onClick={() => {
+                setPlato("");
+                setI1(""); setI2(""); setI3(""); setI4(""); setI5("");
+                setMsg("");
+              }}
+              disabled={loading}
+            >
+              Limpiar
+            </button>
+          </div>
+
+          {msg && <div className="small" style={{ marginTop: 6 }}>{msg}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FoodAutocomplete({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [opts, setOpts] = useState<FoodOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const debounced = useDebouncedValue(value, 220);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
-  // cerrar al click fuera
+  // cerrar si click fuera
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!boxRef.current) return;
@@ -48,155 +197,111 @@ function NuevaRecetaInner() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // buscar foods_base
   useEffect(() => {
-    const q = clean(ingredient);
-    setAiData(null);
-    setMsg("");
-
+    const q = clean(debounced);
     if (!q) {
-      setResults([]);
+      setOpts([]);
+      setErr("");
+      setLoading(false);
       return;
     }
 
     (async () => {
-      const { data } = await supabase
+      setLoading(true);
+      setErr("");
+
+      // Filtrado rápido por foods_base
+      const { data, error } = await supabase
         .from("foods_base")
-        .select("id, name, kcal_100, prot_100, carb_100, fat_100, ration_norm")
+        .select("id, name, default_portion_g")
         .ilike("name", `%${q}%`)
-        .order("name")
-        .limit(6);
+        .order("name", { ascending: true })
+        .limit(8);
 
-      setResults((data ?? []) as Food[]);
+      if (error) {
+        setErr(error.message);
+        setOpts([]);
+      } else {
+        setOpts((data as any[]) as FoodOption[]);
+      }
+
+      setLoading(false);
     })();
-  }, [ingredient]);
+  }, [debounced]);
 
-  async function calcWithAI() {
-    setAiLoading(true);
-    setMsg("");
-    setAiData(null);
-
-    try {
-      const r = await fetch("/api/ai-macros", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: ingredient }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "Error IA");
-      setAiData(j);
-    } catch (e: any) {
-      setMsg(e.message);
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
-  async function saveFood() {
-    if (!aiData) return;
-
-    const { error } = await supabase.from("Foods").insert({
-      name: aiData.name,
-      kcal_100: aiData.kcal_100,
-      prot_100: aiData.prot_100,
-      carb_100: aiData.carb_100,
-      fat_100: aiData.fat_100,
-      ration_norm: aiData.ration_norm,
-      // el resto de columnas existen pero de momento no las usamos:
-      // type, notes, ration_min, ration_max
-    });
-
-    if (error) {
-      setMsg("Error guardando ingrediente: " + error.message);
-      return;
-    }
-
-    setIngredient(aiData.name);
-    setOpen(false);
-    setMsg("Ingrediente añadido ✅");
-  }
+  const hint = useMemo(() => {
+    if (!clean(value)) return "";
+    const exact = opts.find((o) => o.name === clean(value));
+    if (exact?.default_portion_g != null) return `Ración: ${exact.default_portion_g} g`;
+    return "";
+  }, [opts, value]);
 
   return (
-    <div className="card">
-      <h1 className="h1">Nueva receta · Ingrediente</h1>
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <label className="small">{label}</label>
 
-      <div ref={boxRef} style={{ position: "relative", marginTop: 12 }}>
-        <input
-          className="input"
-          value={ingredient}
-          onChange={(e) => {
-            setIngredient(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          placeholder="Escribe un ingrediente…"
-        />
+      <input
+        className="input"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Enter" && open && opts.length > 0) {
+            e.preventDefault();
+            onChange(opts[0].name);
+            setOpen(false);
+          }
+        }}
+        placeholder="Empieza a escribir… (ej: Arroz)"
+        autoComplete="off"
+      />
 
-        {/* ✅ LINK BIEN PUESTO (DENTRO DEL JSX) */}
-        <Link
-          href={`/alimentos/nuevo?name=${encodeURIComponent(ingredient || "")}`}
-          className="btn"
-          style={{ marginTop: 6, display: "inline-flex" }}
-        >
-          ➕ Añadir ingrediente a la lista
-        </Link>
-
-        {open && (
-          <div
-            className="card"
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: "100%",
-              marginTop: 6,
-              zIndex: 20,
-            }}
-          >
-            {results.length > 0 ? (
-              results.map((f) => (
-                <div
-                  key={f.id}
-                  className="small"
-                  style={{ padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}
-                  onClick={() => {
-                    setIngredient(f.name);
-                    setOpen(false);
-                  }}
-                >
-                  {f.name} · {f.kcal_100} kcal/100g
-                </div>
-              ))
-            ) : (
-              <div className="stack">
-                <div className="small muted">No existe el ingrediente en la base.</div>
-
-                <button className="btn" onClick={calcWithAI} disabled={aiLoading || !clean(ingredient)}>
-                  {aiLoading ? "Calculando…" : "Calcular macros con IA"}
-                </button>
-
-                {aiData && (
-                  <div className="card">
-                    <div className="small">
-                      <b>{aiData.name}</b>
-                    </div>
-                    <div className="small">
-                      {aiData.kcal_100} kcal · P {aiData.prot_100} · C {aiData.carb_100} · G {aiData.fat_100}
-                    </div>
-                    <div className="small">Ración sugerida: {aiData.ration_norm} g</div>
-
-                    <button className="btn primary" onClick={saveFood}>
-                      Añadir a ingredientes
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+      <div className="small muted" style={{ marginTop: 4, minHeight: 16 }}>
+        {err ? <span className="color-danger">{err}</span> : loading ? "Buscando…" : hint}
       </div>
 
-      {msg && <div className="small" style={{ marginTop: 10 }}>{msg}</div>}
+      {open && (opts.length > 0) && (
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: "100%",
+            marginTop: 6,
+            padding: 8,
+            zIndex: 30,
+            background: "#0b1220",
+            border: "1px solid rgba(255,255,255,0.12)",
+          }}
+        >
+          {opts.map((o) => (
+            <button
+              key={o.id}
+              className="btn"
+              style={{
+                width: "100%",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+              onClick={() => {
+                onChange(o.name);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <span style={{ textAlign: "left" }}>{o.name}</span>
+              <span className="small muted">
+                {o.default_portion_g != null ? `${o.default_portion_g} g` : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
