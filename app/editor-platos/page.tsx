@@ -9,11 +9,11 @@ type StgPlatoListRow = { id: string; plato: string };
 type StgPlatoDetailRow = {
   id: string;
   plato: string;
-  extra: string | null;
-  proteina: string | null;
-  carbohidrato2: string | null;
-  grasa: string | null;
-  extra2: string | null;
+  ingrediente_1: string | null;
+  ingrediente_2: string | null;
+  ingrediente_3: string | null;
+  ingrediente_4: string | null;
+  ingrediente_5: string | null;
 };
 
 type FoodBase = {
@@ -23,15 +23,21 @@ type FoodBase = {
   prot_100: number;
   carb_100: number;
   fat_100: number;
+  default_portion_g: number | null;
 };
 
-type IngredientSlotKey = "proteina" | "carbohidrato2" | "grasa" | "extra" | "extra2";
+type IngredientSlotKey =
+  | "ingrediente_1"
+  | "ingrediente_2"
+  | "ingrediente_3"
+  | "ingrediente_4"
+  | "ingrediente_5";
 
 type IngredientRow = {
   slot: IngredientSlotKey;
   label: string;
-  foodName: string;      // el texto que viene de stg_platos
-  grams: number;         // editable
+  foodName: string; // texto que viene de stg_platos
+  grams: number; // editable (por defecto default_portion_g)
   food?: FoodBase | null; // match en foods_base
 };
 
@@ -47,11 +53,11 @@ function cleanName(s: string) {
 }
 
 const SLOTS: { key: IngredientSlotKey; label: string }[] = [
-  { key: "proteina", label: "Proteína" },
-  { key: "carbohidrato2", label: "Carbohidrato" },
-  { key: "grasa", label: "Grasa" },
-  { key: "extra", label: "Extra" },
-  { key: "extra2", label: "Extra 2" },
+  { key: "ingrediente_1", label: "Ingrediente 1" },
+  { key: "ingrediente_2", label: "Ingrediente 2" },
+  { key: "ingrediente_3", label: "Ingrediente 3" },
+  { key: "ingrediente_4", label: "Ingrediente 4" },
+  { key: "ingrediente_5", label: "Ingrediente 5" },
 ];
 
 export default function RecetasPage() {
@@ -70,7 +76,7 @@ function RecetasInner() {
   const [selectedPlatoId, setSelectedPlatoId] = useState("");
 
   const [rows, setRows] = useState<IngredientRow[]>([]);
-  const [notFound, setNotFound] = useState<string[]>([]); // ingredientes que no casan en foods_base
+  const [notFound, setNotFound] = useState<string[]>([]);
 
   // 1) lista de recetas desde stg_platos
   useEffect(() => {
@@ -87,8 +93,6 @@ function RecetasInner() {
         setMsg("Error cargando recetas: " + error.message);
         setPlatos([]);
       } else {
-        // Si stg_platos tiene duplicados (mismo plato repetido por otras columnas),
-        // nos quedamos con id únicos.
         const seen = new Set<string>();
         const clean = ((data as any[]) ?? [])
           .filter((x) => x?.id && x?.plato)
@@ -100,7 +104,7 @@ function RecetasInner() {
     })();
   }, []);
 
-  // 2) al seleccionar receta: leer columnas extra/proteina/... y buscar en foods_base
+  // 2) al seleccionar receta: leer ingrediente_1..5 y buscar en foods_base
   useEffect(() => {
     if (!selectedPlatoId) {
       setRows([]);
@@ -113,10 +117,9 @@ function RecetasInner() {
       setMsg("");
       setNotFound([]);
 
-      // Leer la receta (con las columnas ingrediente)
       const { data: p, error: e1 } = await supabase
         .from("stg_platos")
-        .select("id, plato, extra, proteina, carbohidrato2, grasa, extra2")
+        .select("id, plato, ingrediente_1, ingrediente_2, ingrediente_3, ingrediente_4, ingrediente_5")
         .eq("id", selectedPlatoId)
         .maybeSingle();
 
@@ -129,7 +132,7 @@ function RecetasInner() {
 
       const plato = p as StgPlatoDetailRow;
 
-      // Construir lista de ingredientes desde columnas
+      // Construir lista de ingredientes desde columnas ingrediente_1..5
       const candidates: { slot: IngredientSlotKey; label: string; foodName: string }[] = [];
       for (const s of SLOTS) {
         const val = (plato as any)[s.key] as string | null;
@@ -139,18 +142,17 @@ function RecetasInner() {
       }
 
       if (candidates.length === 0) {
-        setMsg("Esta receta no tiene ingredientes en extra/proteina/carbohidrato2/grasa/extra2.");
+        setMsg("Esta receta no tiene ingredientes en ingrediente_1..ingrediente_5.");
         setRows([]);
         setLoading(false);
         return;
       }
 
-      // Buscar los alimentos en foods_base por nombre EXACTO
-      // (si no coincide exacto, lo marcamos como no encontrado)
+      // Buscar foods_base por nombre EXACTO + traer default_portion_g
       const names = Array.from(new Set(candidates.map((c) => c.foodName)));
       const { data: foods, error: e2 } = await supabase
         .from("foods_base")
-        .select("id, name, kcal_100, prot_100, carb_100, fat_100")
+        .select("id, name, kcal_100, prot_100, carb_100, fat_100, default_portion_g")
         .in("name", names);
 
       if (e2) {
@@ -163,14 +165,18 @@ function RecetasInner() {
       const mapByName: Record<string, FoodBase> = {};
       (foods as any[]).forEach((f) => (mapByName[f.name] = f as FoodBase));
 
-      // Crear filas editables
-      const initialRows: IngredientRow[] = candidates.map((c) => ({
-        slot: c.slot,
-        label: c.label,
-        foodName: c.foodName,
-        grams: 100, // por defecto 100g para que veas números al instante
-        food: mapByName[c.foodName] ?? null,
-      }));
+      // Crear filas editables usando default_portion_g como gramos iniciales (fallback 100)
+      const initialRows: IngredientRow[] = candidates.map((c) => {
+        const food = mapByName[c.foodName] ?? null;
+        const g0 = food?.default_portion_g ?? 100;
+        return {
+          slot: c.slot,
+          label: c.label,
+          foodName: c.foodName,
+          grams: n(g0),
+          food,
+        };
+      });
 
       const nf = initialRows.filter((r) => !r.food).map((r) => r.foodName);
       setNotFound(Array.from(new Set(nf)));
@@ -212,7 +218,7 @@ function RecetasInner() {
       <div className="card">
         <h1 className="h1">Recetas · Calculadora de macros</h1>
         <div className="small muted">
-          Lee ingredientes desde <b>stg_platos</b> (columnas extra/proteina/carbohidrato2/grasa/extra2) y busca macros en <b>foods_base</b>.
+          Lee ingredientes desde <b>stg_platos</b> (ingrediente_1..ingrediente_5) y usa <b>foods_base</b> (incluye default_portion_g).
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
@@ -257,7 +263,7 @@ function RecetasInner() {
                 gap: 10,
               }}
             >
-              <div>Tipo</div>
+              <div>Slot</div>
               <div>Ingrediente</div>
               <div>Gramos</div>
               <div>Kcal</div>
@@ -284,6 +290,9 @@ function RecetasInner() {
                 <div>
                   <div>{r.foodName}</div>
                   {!r.food && <div className="small color-danger">No coincide con foods_base.name</div>}
+                  {r.food?.default_portion_g != null && (
+                    <div className="small muted">Ración normal: {r.food.default_portion_g} g</div>
+                  )}
                 </div>
 
                 <div>
