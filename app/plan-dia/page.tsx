@@ -1,356 +1,342 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
+import { todayISO } from "@/lib/date";
 
-type DayType = "train" | "rest";
-
-type Settings = {
-  // Nuevos nombres (recomendados)
-  kcal_train?: number | null;
-  kcal_rest?: number | null;
-
-  // Compatibilidad por si tu tabla antigua aún usa estos nombres
-  kcal_entreno?: number | null;
-  kcal_descanso?: number | null;
-
-  prot_g?: number | null;
-  carb_g?: number | null;
-  fat_g?: number | null;
+type Plato = {
+  tipo_dia: "entreno" | "descanso";
+  comida: "desayuno" | "comida" | "merienda" | "cena";
+  plato: string;
 };
 
-type DayTotalsRow = {
-  user_id: string;
+type WeekDayPlan = {
   day: string; // YYYY-MM-DD
-  day_type: DayType;
-  kcal: number;
-  prot: number;
-  carb: number;
-  fat: number;
+  tipo_dia: "entreno" | "descanso";
+  desayuno_plato: string | null;
+  comida_plato: string | null;
+  merienda_plato: string | null;
+  cena_plato: string | null;
 };
 
-const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
-
-function ymd(d: Date): string {
+function ymd(d: Date) {
   const yy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yy}-${mm}-${dd}`;
 }
-
-function startOfWeekMonday(d: Date): Date {
+function startOfWeekMonday(d: Date) {
   const x = new Date(d);
-  const day = (x.getDay() + 6) % 7; // lunes=0 ... domingo=6
+  const day = (x.getDay() + 6) % 7;
   x.setDate(x.getDate() - day);
   x.setHours(0, 0, 0, 0);
   return x;
 }
+const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
 
-function addDays(d: Date, n: number) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
+function pickOne(arr: Plato[]) {
+  if (!arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
-const DEFAULT_MEALS = [
-  { meal_type: "breakfast", title: "Desayuno", order_idx: 1 },
-  { meal_type: "lunch", title: "Comida", order_idx: 2 },
-  { meal_type: "snack", title: "Merienda", order_idx: 3 },
-  { meal_type: "dinner", title: "Cena", order_idx: 4 },
-] as const;
-
-async function ensurePlanDay(dayISO: string, defaultType: DayType) {
-  const { data: u } = await supabase.auth.getUser();
-  const user = u?.user;
-  if (!user) throw new Error("No auth");
-
-  // 1) plan_day
-  const { data: existing, error: e1 } = await supabase
-    .from("plan_days")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("day", dayISO)
-    .maybeSingle();
-
-  if (e1) throw e1;
-
-  let planDay = existing as any;
-
-  if (!planDay) {
-    const { data: inserted, error: e2 } = await supabase
-      .from("plan_days")
-      .insert({ user_id: user.id, day: dayISO, day_type: defaultType })
-      .select("*")
-      .single();
-    if (e2) throw e2;
-    planDay = inserted;
-  }
-
-  // 2) comidas si faltan
-  const { data: meals, error: e3 } = await supabase
-    .from("plan_meals")
-    .select("*")
-    .eq("plan_day_id", planDay.id)
-    .order("order_idx", { ascending: true });
-
-  if (e3) throw e3;
-
-  if (!meals || meals.length === 0) {
-    const payload = DEFAULT_MEALS.map((m) => ({
-      plan_day_id: planDay.id,
-      meal_type: m.meal_type,
-      title: m.title,
-      order_idx: m.order_idx,
-    }));
-    const { error: e4 } = await supabase.from("plan_meals").insert(payload);
-    if (e4) throw e4;
-  }
-
-  return planDay as { id: string; day_type: DayType; day: string };
-}
-
-export default function PlanDiaWeekPage() {
+export default function PlanDiaPage() {
   return (
     <AuthGate>
-      <Inner />
+      <PlanSemanalInner />
     </AuthGate>
   );
 }
 
-function Inner() {
+function PlanSemanalInner() {
+  const [userId, setUserId] = useState("");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
-  const weekStart = useMemo(() => startOfWeekMonday(anchor), [anchor]);
-
-  const weekDays = useMemo(() => {
-    return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  }, [weekStart]);
-
-  const weekStartISO = useMemo(() => ymd(weekStart), [weekStart]);
-  const weekEndISO = useMemo(() => ymd(addDays(weekStart, 6)), [weekStart]);
-
-  const title = useMemo(() => {
-    const s = weekStart;
-    const e = addDays(weekStart, 6);
-    return `${s.toLocaleDateString("es-ES", { day: "2-digit", month: "short" })} — ${e.toLocaleDateString(
-      "es-ES",
-      { day: "2-digit", month: "short" }
-    )}`;
-  }, [weekStart]);
-
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
 
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [totals, setTotals] = useState<DayTotalsRow[]>([]);
+  const weekStart = useMemo(() => startOfWeekMonday(anchor), [anchor]);
+  const weekStartISO = useMemo(() => ymd(weekStart), [weekStart]);
 
-  function shiftWeek(delta: number) {
-    setAnchor((prev) => addDays(prev, delta * 7));
+  const weekDays = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      return d;
+    });
+  }, [weekStart]);
+
+  const [platos, setPlatos] = useState<Plato[]>([]);
+  const [rows, setRows] = useState<WeekDayPlan[]>(
+    () =>
+      Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(weekStart);
+        d.setDate(weekStart.getDate() + i);
+        return {
+          day: ymd(d),
+          tipo_dia: "entreno",
+          desayuno_plato: null,
+          comida_plato: null,
+          merienda_plato: null,
+          cena_plato: null,
+        };
+      })
+  );
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
+  }, []);
+
+  // Cargar platos desde stg_platos (asegúrate de que columnas están renombradas)
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setStatus("");
+      const { data, error } = await supabase
+        .from("stg_platos")
+        .select("tipo_dia,comida,plato");
+
+      if (error) {
+        setStatus(error.message);
+        setLoading(false);
+        return;
+      }
+      setPlatos((data ?? []) as any);
+      setLoading(false);
+    })();
+  }, []);
+
+  // Cargar semana guardada
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      setLoading(true);
+      setStatus("");
+
+      const from = ymd(weekStart);
+      const to = ymd(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6));
+
+      const { data, error } = await supabase
+        .from("week_plan_days")
+        .select("day,tipo_dia,desayuno_plato,comida_plato,merienda_plato,cena_plato")
+        .eq("user_id", userId)
+        .gte("day", from)
+        .lte("day", to)
+        .order("day", { ascending: true });
+
+      if (error) {
+        setStatus(error.message);
+        setLoading(false);
+        return;
+      }
+
+      // Base week template
+      const base: WeekDayPlan[] = weekDays.map((d) => ({
+        day: ymd(d),
+        tipo_dia: "entreno",
+        desayuno_plato: null,
+        comida_plato: null,
+        merienda_plato: null,
+        cena_plato: null,
+      }));
+
+      // Merge saved rows
+      const map = new Map<string, any>();
+      (data ?? []).forEach((r: any) => map.set(String(r.day), r));
+
+      const merged = base.map((b) => {
+        const r = map.get(b.day);
+        if (!r) return b;
+        return {
+          day: b.day,
+          tipo_dia: (r.tipo_dia ?? "entreno") as any,
+          desayuno_plato: r.desayuno_plato ?? null,
+          comida_plato: r.comida_plato ?? null,
+          merienda_plato: r.merienda_plato ?? null,
+          cena_plato: r.cena_plato ?? null,
+        };
+      });
+
+      setRows(merged);
+      setLoading(false);
+    })();
+  }, [userId, weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const options = useMemo(() => {
+    const by = (tipo: "entreno" | "descanso", comida: Plato["comida"]) =>
+      platos.filter((p) => p.tipo_dia === tipo && p.comida === comida);
+    return { by };
+  }, [platos]);
+
+  function setRow(idx: number, patch: Partial<WeekDayPlan>) {
+    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   }
 
-  function kcalTargetFor(dayType: DayType) {
-    if (!settings) return 0;
-    // preferir nuevos nombres, fallback antiguos
-    const train = settings.kcal_train ?? settings.kcal_entreno ?? 0;
-    const rest = settings.kcal_rest ?? settings.kcal_descanso ?? 0;
-    return dayType === "train" ? train : rest;
+  function autogenerarSemana() {
+    setRows((prev) =>
+      prev.map((r) => {
+        const d = r.tipo_dia;
+        const des = pickOne(options.by(d, "desayuno"))?.plato ?? r.desayuno_plato;
+        const com = pickOne(options.by(d, "comida"))?.plato ?? r.comida_plato;
+        const mer = pickOne(options.by(d, "merienda"))?.plato ?? r.merienda_plato;
+        const cen = pickOne(options.by(d, "cena"))?.plato ?? r.cena_plato;
+        return { ...r, desayuno_plato: des, comida_plato: com, merienda_plato: mer, cena_plato: cen };
+      })
+    );
+    setStatus("Semana autogenerada ✅ (puedes ajustar a mano)");
   }
 
-  async function loadWeek() {
+  async function guardarSemana() {
+    if (!userId) return;
     setLoading(true);
     setStatus("");
 
-    const { data: u } = await supabase.auth.getUser();
-    const user = u?.user;
-    if (!user) {
-      setLoading(false);
-      return;
-    }
+    const payload = rows.map((r) => ({
+      user_id: userId,
+      week_start: weekStartISO,
+      day: r.day,
+      tipo_dia: r.tipo_dia,
+      desayuno_plato: r.desayuno_plato,
+      comida_plato: r.comida_plato,
+      merienda_plato: r.merienda_plato,
+      cena_plato: r.cena_plato,
+      updated_at: new Date().toISOString(),
+    }));
 
-    // 1) settings (compatibles con nombres viejos y nuevos)
-    const { data: s, error: es } = await supabase
-      .from("user_settings")
-      .select("kcal_train,kcal_rest,kcal_entreno,kcal_descanso,prot_g,carb_g,fat_g")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (es) {
-      setStatus("Error settings: " + es.message);
-    } else {
-      setSettings((s as any) ?? null);
-    }
-
-    // 2) asegurar estructura de 7 días (sin duplicar)
-    try {
-      for (const d of weekDays) {
-        const iso = ymd(d);
-        await ensurePlanDay(iso, "train");
-      }
-    } catch (e: any) {
-      setStatus("Error asegurando días: " + (e?.message ?? "unknown"));
-      setLoading(false);
-      return;
-    }
-
-    // 3) cargar totales desde la vista v_day_totals
-    const { data: rows, error: et } = await supabase
-      .from("v_day_totals")
-      .select("user_id,day,day_type,kcal,prot,carb,fat")
-      .eq("user_id", user.id)
-      .gte("day", weekStartISO)
-      .lte("day", weekEndISO)
-      .order("day", { ascending: true });
-
-    if (et) {
-      setStatus("Error totales: " + et.message);
-      setTotals([]);
-    } else {
-      setTotals(((rows as any) ?? []) as DayTotalsRow[]);
-    }
+    const { error } = await supabase
+      .from("week_plan_days")
+      .upsert(payload, { onConflict: "user_id,day" });
 
     setLoading(false);
+    setStatus(error ? error.message : "Semana guardada ✅");
   }
 
-  useEffect(() => {
-    loadWeek();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStartISO]);
-
-  async function setDayType(dayISO: string, newType: DayType) {
-    const { data: u } = await supabase.auth.getUser();
-    const user = u?.user;
-    if (!user) return;
-
-    // Actualizamos el day_type del plan_day correspondiente
-    const { data: pd, error: e1 } = await supabase
-      .from("plan_days")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("day", dayISO)
-      .maybeSingle();
-
-    if (e1 || !pd?.id) {
-      setStatus("No encuentro plan_day para " + dayISO);
-      return;
-    }
-
-    const { error: e2 } = await supabase.from("plan_days").update({ day_type: newType }).eq("id", pd.id);
-    if (e2) {
-      setStatus("Error cambiando tipo: " + e2.message);
-      return;
-    }
-
-    // Refrescamos totales/estado
-    setTotals((prev) =>
-      prev.map((r) => (r.day === dayISO ? { ...r, day_type: newType } : r))
-    );
+  function shiftWeek(delta: number) {
+    const d = new Date(anchor);
+    d.setDate(d.getDate() + delta * 7);
+    setAnchor(d);
   }
 
-  const weekTotals = useMemo(() => {
-    return totals.reduce(
-      (acc, r) => ({
-        kcal: acc.kcal + (r.kcal ?? 0),
-        prot: acc.prot + (r.prot ?? 0),
-        carb: acc.carb + (r.carb ?? 0),
-        fat: acc.fat + (r.fat ?? 0),
-      }),
-      { kcal: 0, prot: 0, carb: 0, fat: 0 }
-    );
-  }, [totals]);
+  const title = useMemo(() => {
+    const s = weekStart;
+    const e = new Date(weekStart);
+    e.setDate(weekStart.getDate() + 6);
+    const a = s.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+    const b = e.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+    return `${a} — ${b}`;
+  }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
       <div className="card">
         <h1 className="h1">Plan semanal</h1>
+        <p className="p">Edita tu semana completa y se verá en “Hoy” automáticamente.</p>
 
-        <div className="row" style={{ justifyContent: "space-between", margin: "15px 0" }}>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
           <button className="btn" onClick={() => shiftWeek(-1)}>←</button>
           <span className="badge"><b>{title}</b></span>
           <button className="btn" onClick={() => shiftWeek(1)}>→</button>
         </div>
 
-        <div className="row" style={{ gap: 10 }}>
-          <button className="btn" onClick={() => setAnchor(new Date())}>Hoy</button>
-          <button className="btn" onClick={loadWeek} disabled={loading}>
-            {loading ? "Cargando..." : "Recargar"}
-          </button>
+        <div className="row" style={{ gap: 10, marginTop: 12 }}>
+          <button className="btn" onClick={() => setAnchor(new Date())}>Ir a hoy</button>
+          <button className="btn" onClick={autogenerarSemana}>Autogenerar semana</button>
+          <button className="btn primary" onClick={guardarSemana}>Guardar semana</button>
         </div>
 
-        <div className="row" style={{ gap: 10, marginTop: 10 }}>
-          <span className="badge">Semana: {weekTotals.kcal.toFixed(0)} kcal</span>
-          <span className="badge">P: {weekTotals.prot.toFixed(0)}</span>
-          <span className="badge">C: {weekTotals.carb.toFixed(0)}</span>
-          <span className="badge">G: {weekTotals.fat.toFixed(0)}</span>
-        </div>
-
-        {status && <div className="small" style={{ marginTop: 10 }}>{status}</div>}
+        {loading ? <div className="small" style={{ marginTop: 10 }}>Cargando…</div> : null}
+        {status ? <div className="small" style={{ marginTop: 10 }}>{status}</div> : null}
       </div>
 
-      <div style={{ display: "grid", gap: 15, marginTop: 15 }}>
-        {weekDays.map((d, idx) => {
-          const iso = ymd(d);
+      {/* Editor semana */}
+      <div className="card" style={{ marginTop: 12 }}>
+        <div style={{ fontWeight: 900, marginBottom: 10 }}>Editar días</div>
 
-          const row =
-            totals.find((x) => x.day === iso) ??
-            ({
-              user_id: "",
-              day: iso,
-              day_type: "train",
-              kcal: 0,
-              prot: 0,
-              carb: 0,
-              fat: 0,
-            } as DayTotalsRow);
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+          {rows.map((r, idx) => {
+            const d = weekDays[idx];
+            const label = `${DOW_ES[idx]} ${d.getDate()}`;
 
-          const target = kcalTargetFor(row.day_type);
-          const diff = row.kcal - target;
-
-          return (
-            <div key={iso} className="card">
-              <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
-                <div style={{ fontWeight: 900 }}>
-                  {DOW_ES[idx]} {d.getDate()}
-                  <div className="small muted">{iso}</div>
+            return (
+              <div key={r.day} className="card" style={{ padding: 12 }}>
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 900 }}>{label}</div>
+                  <span className="badge">{r.day}</span>
                 </div>
 
-                <div className="row" style={{ gap: 5 }}>
+                <div className="row" style={{ gap: 10, marginTop: 10 }}>
                   <button
-                    className={`btn small ${row.day_type === "train" ? "primary" : ""}`}
-                    onClick={() => setDayType(iso, "train")}
+                    className={`btn ${r.tipo_dia === "entreno" ? "primary" : ""}`}
+                    onClick={() => setRow(idx, { tipo_dia: "entreno" })}
                   >
-                    E
+                    Entreno
                   </button>
                   <button
-                    className={`btn small ${row.day_type === "rest" ? "primary" : ""}`}
-                    onClick={() => setDayType(iso, "rest")}
+                    className={`btn ${r.tipo_dia === "descanso" ? "primary" : ""}`}
+                    onClick={() => setRow(idx, { tipo_dia: "descanso" })}
                   >
-                    D
+                    Descanso
                   </button>
                 </div>
-              </div>
 
-              <div className="row" style={{ justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div>
-                  <div>
-                    <b>{row.kcal.toFixed(0)}</b> kcal{" "}
-                    <span className="muted">
-                      · P {row.prot.toFixed(0)} · C {row.carb.toFixed(0)} · G {row.fat.toFixed(0)}
-                    </span>
-                  </div>
-                  <div className="small muted">
-                    Obj: {target} kcal · {diff >= 0 ? `+${diff.toFixed(0)}` : diff.toFixed(0)} kcal
-                  </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 10 }}>
+                  <SelectPlato
+                    label="Desayuno"
+                    value={r.desayuno_plato}
+                    onChange={(v) => setRow(idx, { desayuno_plato: v })}
+                    platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
+                  />
+                  <SelectPlato
+                    label="Comida"
+                    value={r.comida_plato}
+                    onChange={(v) => setRow(idx, { comida_plato: v })}
+                    platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
+                  />
+                  <SelectPlato
+                    label="Merienda"
+                    value={r.merienda_plato}
+                    onChange={(v) => setRow(idx, { merienda_plato: v })}
+                    platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
+                  />
+                  <SelectPlato
+                    label="Cena"
+                    value={r.cena_plato}
+                    onChange={(v) => setRow(idx, { cena_plato: v })}
+                    platos={options.by(r.tipo_dia, "cena").map((p) => p.plato)}
+                  />
                 </div>
-
-                <Link className="btn primary" href={`/plan-dia/${iso}`}>
-                  Ver día →
-                </Link>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
+}
+
+function SelectPlato({
+  label,
+  value,
+  onChange,
+  platos,
+}: {
+  label: string;
+  value: string | null;
+  onChange: (v: string | null) => void;
+  platos: string[];
+}) {
+  return (
+    <div>
+      <div className="label">{label}</div>
+      <select className="input" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+        <option value="">—</option>
+        {platos.map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 }
