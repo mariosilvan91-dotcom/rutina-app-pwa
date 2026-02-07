@@ -4,419 +4,306 @@ import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
 
+/**
+ * app/editor-platos/page.tsx
+ * ✅ FIX: columnas con tilde en select() -> usar comillas dobles o alias
+ * Aquí uso ALIAS para evitar tildes en TypeScript: "Ración_normal_g":racion_normal_g
+ */
+
 // --- TIPOS ---
 type TipoDia = "entreno" | "descanso";
 type ComidaKey = "desayuno" | "comida" | "merienda" | "cena";
 
-type PlatoRow = {
+type Plato = {
+  id: string;
+  plato: string;
   tipo_dia: TipoDia;
   comida: ComidaKey;
-  plato: string;
+  proteina: string | null;
+  carbohidrato2: string | null;
+  grasa: string | null;
+  extra: string | null;
+  extra2: string | null;
 };
 
-type WeekDayPlan = {
-  day: string;
-  tipo_dia: TipoDia;
-  desayuno_plato: string | null;
-  comida_plato: string | null;
-  merienda_plato: string | null;
-  cena_plato: string | null;
+type Alimento = {
+  id: string;
+  Alimento: string;
+  racion_normal_g: number | null; // ✅ alias
 };
 
-// ✅ Tipado REAL de v_plato_items_macros (vista)
-type VPlatoItem = {
-  plato_id: string;
-  plato_nombre: string;
-  tipo_item: string;
-  ingrediente_raw: string;
-  alimento_nombre: string;
-  g: number | null;
-
-  proteina_100g: number | null;
-  carbs_100g: number | null;
-  grasas_100g: number | null;
-  kcal_100g: number | null;
-
-  proteinas_g: number | null;
-  carbs_g: number | null;
-  grasas_g: number | null;
-  kcal: number | null;
-};
-
-const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
-
-// --- HELPERS ---
-function ymd(d: Date): string {
-  const yy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
-}
-
-function startOfWeekMonday(d: Date): Date {
-  const x = new Date(d);
-  const day = (x.getDay() + 6) % 7;
-  x.setDate(x.getDate() - day);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function pickOne<T>(arr: T[]): T | null {
-  if (!arr.length) return null;
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function r1(n: number | string | null | undefined): number {
-  const x = Number(n || 0);
-  return Math.round(x * 10) / 10;
-}
-
-// --- PAGE ---
-export default function PlanDiaPage() {
+export default function EditorPlatosPage() {
   return (
     <AuthGate>
-      <PlanSemanalInner />
+      <EditorPlatosInner />
     </AuthGate>
   );
 }
 
-function PlanSemanalInner() {
-  const [userId, setUserId] = useState<string>("");
-  const [anchor, setAnchor] = useState<Date>(() => new Date());
-  const [loading, setLoading] = useState<boolean>(false);
+function EditorPlatosInner() {
+  const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>("");
 
-  const weekStart = useMemo(() => startOfWeekMonday(anchor), [anchor]);
-  const weekStartISO = useMemo(() => ymd(weekStart), [weekStart]);
+  const [platos, setPlatos] = useState<Plato[]>([]);
+  const [foods, setFoods] = useState<Alimento[]>([]);
 
-  const weekDays = useMemo(() => {
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(weekStart);
-      d.setDate(weekStart.getDate() + i);
-      return d;
-    });
-  }, [weekStart]);
+  const [selectedPlatoId, setSelectedPlatoId] = useState<string>("");
 
-  const [platos, setPlatos] = useState<PlatoRow[]>([]);
-  const [rows, setRows] = useState<WeekDayPlan[]>([]);
+  const selectedPlato = useMemo(
+    () => platos.find((p) => p.id === selectedPlatoId) || null,
+    [platos, selectedPlatoId]
+  );
 
-  // Detalle
-  const [openDetail, setOpenDetail] = useState<Record<string, boolean>>({});
-  const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
-  const [detailError, setDetailError] = useState<Record<string, string>>({});
-  const [detailItems, setDetailItems] = useState<Record<string, VPlatoItem[]>>({});
-
-  function dk(day: string, meal: ComidaKey) {
-    return `${day}__${meal}`;
-  }
-
-  // Usuario
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
-  }, []);
-
-  // Catálogo de platos
-  useEffect(() => {
-    async function loadPlatos() {
-      const { data, error } = await supabase
-        .from("stg_platos")
-        .select("tipo_dia, comida, plato");
-
-      if (error) {
-        setStatus("Error platos: " + error.message);
-        return;
-      }
-      if (data) setPlatos(data as PlatoRow[]);
-    }
-    loadPlatos();
-  }, []);
-
-  // Plan semanal
-  useEffect(() => {
-    if (!userId) return;
-
-    async function loadWeekPlan() {
-      setLoading(true);
-
-      const from = ymd(weekStart);
-      const toDate = new Date(weekStart);
-      toDate.setDate(toDate.getDate() + 6);
-      const to = ymd(toDate);
-
-      const { data, error } = await supabase
-        .from("week_plan_days")
-        .select("day, tipo_dia, desayuno_plato, comida_plato, merienda_plato, cena_plato")
-        .eq("user_id", userId)
-        .gte("day", from)
-        .lte("day", to)
-        .order("day", { ascending: true });
-
-      if (error) {
-        setStatus("Error plan: " + error.message);
-        setLoading(false);
-        return;
-      }
-
-      const m = new Map<string, any>();
-      (data ?? []).forEach((r) => m.set(String(r.day), r));
-
-      const merged: WeekDayPlan[] = weekDays.map((d) => {
-        const iso = ymd(d);
-        const r = m.get(iso);
-        return {
-          day: iso,
-          tipo_dia: (r?.tipo_dia as TipoDia) ?? "entreno",
-          desayuno_plato: r?.desayuno_plato ?? null,
-          comida_plato: r?.comida_plato ?? null,
-          merienda_plato: r?.merienda_plato ?? null,
-          cena_plato: r?.cena_plato ?? null,
-        };
-      });
-
-      setRows(merged);
-      setLoading(false);
-    }
-
-    loadWeekPlan();
-  }, [userId, weekStartISO, weekDays, weekStart]);
-
-  function by(tipo: TipoDia, comida: ComidaKey) {
-    return platos.filter((p) => p.tipo_dia === tipo && p.comida === comida);
-  }
-
-  function setRow(idx: number, patch: Partial<WeekDayPlan>) {
-    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
-  }
-
-  function autogenerarSemana() {
-    setRows((prev) =>
-      prev.map((r) => ({
-        ...r,
-        desayuno_plato: pickOne(by(r.tipo_dia, "desayuno"))?.plato ?? r.desayuno_plato,
-        comida_plato: pickOne(by(r.tipo_dia, "comida"))?.plato ?? r.comida_plato,
-        merienda_plato: pickOne(by(r.tipo_dia, "merienda"))?.plato ?? r.merienda_plato,
-        cena_plato: pickOne(by(r.tipo_dia, "cena"))?.plato ?? r.cena_plato,
-      }))
-    );
-    setStatus("Semana autogenerada ✅");
-  }
-
-  async function guardarSemana() {
-    if (!userId) return;
+  async function loadAll() {
     setLoading(true);
-
-    const payload = rows.map((r) => ({
-      user_id: userId,
-      day: r.day,
-      week_start: weekStartISO,
-      tipo_dia: r.tipo_dia,
-      desayuno_plato: r.desayuno_plato,
-      comida_plato: r.comida_plato,
-      merienda_plato: r.merienda_plato,
-      cena_plato: r.cena_plato,
-      updated_at: new Date().toISOString(),
-    }));
-
-    const { error } = await supabase.from("week_plan_days").upsert(payload, { onConflict: "user_id,day" });
-    setLoading(false);
-    setStatus(error ? error.message : "Semana guardada ✅");
-  }
-
-  function shiftWeek(delta: number) {
-    const d = new Date(anchor);
-    d.setDate(d.getDate() + delta * 7);
-    setAnchor(d);
-  }
-
-  const title = useMemo(() => {
-    const s = weekStart;
-    const e = new Date(weekStart);
-    e.setDate(weekStart.getDate() + 6);
-    return `${s.toLocaleDateString("es-ES", { day: "2-digit", month: "short" })} — ${e.toLocaleDateString("es-ES", { day: "2-digit", month: "short" })}`;
-  }, [weekStart]);
-
-  // ✅ Detalle: busca ID en stg_platos (filtrando por tipo_dia y comida para evitar duplicados)
-  async function toggleDetalle(day: string, meal: ComidaKey, tipoDia: TipoDia, platoName: string | null) {
-    const key = dk(day, meal);
-    const currentlyOpen = !!openDetail[key];
-    setOpenDetail((prev) => ({ ...prev, [key]: !currentlyOpen }));
-
-    if (currentlyOpen || detailItems[key]?.length || !platoName) return;
-
-    setDetailLoading((prev) => ({ ...prev, [key]: true }));
-    setDetailError((prev) => ({ ...prev, [key]: "" }));
+    setStatus("");
 
     try {
-      const { data: pData, error: pErr } = await supabase
+      // --- 1) PLATOS ---
+      const { data: p, error: pErr } = await supabase
         .from("stg_platos")
-        .select("id")
-        .eq("plato", platoName)
-        .eq("tipo_dia", tipoDia)
-        .eq("comida", meal)
-        .maybeSingle();
+        .select("id, plato, tipo_dia, comida, proteina, carbohidrato2, grasa, extra, extra2")
+        .order("plato", { ascending: true });
 
       if (pErr) throw pErr;
-      if (!pData?.id) throw new Error("Plato no encontrado en stg_platos");
 
-      const { data: items, error: vErr } = await supabase
-        .from("v_plato_items_macros")
-        .select("*")
-        .eq("plato_id", pData.id);
+      // --- 2) FOODS ---
+      // ✅ Columna con tilde: "Ración_normal_g" -> comillas + alias
+      const { data: f, error: fErr } = await supabase
+        .from("stg_foods")
+        .select('id, "Alimento", "Ración_normal_g":racion_normal_g')
+        .order("Alimento", { ascending: true });
 
-      if (vErr) throw vErr;
+      if (fErr) throw fErr;
 
-      console.log("Detalle items:", { platoName, plato_id: pData.id, items });
+      if (p) setPlatos(p as Plato[]);
+      if (f) setFoods(f as Alimento[]);
 
-      setDetailItems((prev) => ({ ...prev, [key]: (items as VPlatoItem[]) ?? [] }));
+      if (!selectedPlatoId && p?.length) setSelectedPlatoId(p[0].id);
+
+      setStatus("Datos cargados ✅");
     } catch (e: any) {
-      setDetailError((prev) => ({ ...prev, [key]: e?.message ?? String(e) }));
+      setStatus("Error: " + (e?.message ?? String(e)));
     } finally {
-      setDetailLoading((prev) => ({ ...prev, [key]: false }));
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function patchSelected(patch: Partial<Plato>) {
+    if (!selectedPlato) return;
+    setPlatos((prev) => prev.map((x) => (x.id === selectedPlato.id ? { ...x, ...patch } : x)));
+  }
+
+  async function saveSelected() {
+    if (!selectedPlato) return;
+    setLoading(true);
+    setStatus("");
+
+    try {
+      const payload = {
+        id: selectedPlato.id,
+        plato: selectedPlato.plato,
+        tipo_dia: selectedPlato.tipo_dia,
+        comida: selectedPlato.comida,
+        proteina: selectedPlato.proteina,
+        carbohidrato2: selectedPlato.carbohidrato2,
+        grasa: selectedPlato.grasa,
+        extra: selectedPlato.extra,
+        extra2: selectedPlato.extra2,
+      };
+
+      const { error } = await supabase.from("stg_platos").upsert(payload, { onConflict: "id" });
+      if (error) throw error;
+
+      setStatus("Guardado ✅");
+    } catch (e: any) {
+      setStatus("Error: " + (e?.message ?? String(e)));
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <div>
+    <div style={{ display: "grid", gap: 12 }}>
       <div className="card">
-        <h1 className="h1">Plan semanal</h1>
-        <div className="row" style={{ justifyContent: "space-between", margin: "15px 0" }}>
-          <button className="btn" onClick={() => shiftWeek(-1)}>←</button>
-          <span className="badge"><b>{title}</b></span>
-          <button className="btn" onClick={() => shiftWeek(1)}>→</button>
-        </div>
+        <h1 className="h1">Editor de platos</h1>
         <div className="row" style={{ gap: 10 }}>
-          <button className="btn" onClick={() => setAnchor(new Date())}>Hoy</button>
-          <button className="btn" onClick={autogenerarSemana}>Autogenerar</button>
-          <button className="btn primary" onClick={guardarSemana} disabled={loading}>Guardar</button>
+          <button className="btn" onClick={loadAll} disabled={loading}>
+            Recargar
+          </button>
+          <button className="btn primary" onClick={saveSelected} disabled={loading || !selectedPlato}>
+            Guardar
+          </button>
         </div>
-        {status && <div className="small" style={{ marginTop: 10 }}>{status}</div>}
+        {status && (
+          <div className="small" style={{ marginTop: 8 }}>
+            {status}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: "grid", gap: 15, marginTop: 15 }}>
-        {rows.map((r, idx) => (
-          <div key={r.day} className="card">
-            <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
-              <div style={{ fontWeight: 900 }}>{DOW_ES[idx]} {new Date(r.day).getDate()}</div>
-              <div className="row" style={{ gap: 5 }}>
-                <button
-                  className={`btn small ${r.tipo_dia === "entreno" ? "primary" : ""}`}
-                  onClick={() => setRow(idx, { tipo_dia: "entreno" })}
-                >E</button>
-                <button
-                  className={`btn small ${r.tipo_dia === "descanso" ? "primary" : ""}`}
-                  onClick={() => setRow(idx, { tipo_dia: "descanso" })}
-                >D</button>
-              </div>
+      <div className="card">
+        <div className="row" style={{ gap: 10, alignItems: "center" }}>
+          <div style={{ minWidth: 260 }}>
+            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
+              Plato
             </div>
-
-            {(["desayuno", "comida", "merienda", "cena"] as ComidaKey[]).map((m) => (
-              <MealBlock
-                key={m}
-                label={m}
-                value={r[`${m}_plato` as keyof WeekDayPlan] as string | null}
-                platos={by(r.tipo_dia, m).map((p) => p.plato)}
-                onChange={(v: string | null) => setRow(idx, { [`${m}_plato`]: v } as any)}
-                isOpen={!!openDetail[dk(r.day, m)]}
-                isLoading={!!detailLoading[dk(r.day, m)]}
-                items={detailItems[dk(r.day, m)] || []}
-                error={detailError[dk(r.day, m)]}
-                onToggle={() => toggleDetalle(r.day, m, r.tipo_dia, r[`${m}_plato` as keyof WeekDayPlan] as string | null)}
-              />
-            ))}
+            <select
+              className="input"
+              value={selectedPlatoId}
+              onChange={(e) => setSelectedPlatoId(e.target.value)}
+              disabled={loading}
+            >
+              {platos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.plato}
+                </option>
+              ))}
+            </select>
           </div>
-        ))}
+
+          <div style={{ flex: 1 }}>
+            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
+              Nombre
+            </div>
+            <input
+              className="input"
+              value={selectedPlato?.plato ?? ""}
+              onChange={(e) => patchSelected({ plato: e.target.value })}
+              disabled={!selectedPlato || loading}
+            />
+          </div>
+        </div>
+
+        <div className="row" style={{ gap: 10, marginTop: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
+              Tipo día
+            </div>
+            <select
+              className="input"
+              value={selectedPlato?.tipo_dia ?? "entreno"}
+              onChange={(e) => patchSelected({ tipo_dia: e.target.value as TipoDia })}
+              disabled={!selectedPlato || loading}
+            >
+              <option value="entreno">entreno</option>
+              <option value="descanso">descanso</option>
+            </select>
+          </div>
+
+          <div style={{ flex: 1 }}>
+            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
+              Comida
+            </div>
+            <select
+              className="input"
+              value={selectedPlato?.comida ?? "desayuno"}
+              onChange={(e) => patchSelected({ comida: e.target.value as ComidaKey })}
+              disabled={!selectedPlato || loading}
+            >
+              <option value="desayuno">desayuno</option>
+              <option value="comida">comida</option>
+              <option value="merienda">merienda</option>
+              <option value="cena">cena</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+          <Field
+            label="Proteína"
+            value={selectedPlato?.proteina ?? ""}
+            onChange={(v) => patchSelected({ proteina: v })}
+            disabled={!selectedPlato || loading}
+          />
+          <Field
+            label="Carbohidrato2"
+            value={selectedPlato?.carbohidrato2 ?? ""}
+            onChange={(v) => patchSelected({ carbohidrato2: v })}
+            disabled={!selectedPlato || loading}
+          />
+          <Field
+            label="Grasa"
+            value={selectedPlato?.grasa ?? ""}
+            onChange={(v) => patchSelected({ grasa: v })}
+            disabled={!selectedPlato || loading}
+          />
+          <Field
+            label="Extra"
+            value={selectedPlato?.extra ?? ""}
+            onChange={(v) => patchSelected({ extra: v })}
+            disabled={!selectedPlato || loading}
+          />
+          <Field
+            label="Extra2"
+            value={selectedPlato?.extra2 ?? ""}
+            onChange={(v) => patchSelected({ extra2: v })}
+            disabled={!selectedPlato || loading}
+          />
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="h2">stg_foods</h2>
+        <div className="small" style={{ marginBottom: 8 }}>
+          Alimentos: <b>{foods.length}</b>
+        </div>
+
+        <div style={{ display: "grid", gap: 6 }}>
+          {foods.slice(0, 50).map((f) => (
+            <div
+              key={f.id}
+              className="row"
+              style={{
+                justifyContent: "space-between",
+                borderBottom: "1px solid #333",
+                padding: "6px 0",
+              }}
+            >
+              <div style={{ fontWeight: 800 }}>{f.Alimento}</div>
+              <div className="badge">{f.racion_normal_g ?? "—"} g</div>
+            </div>
+          ))}
+        </div>
+
+        {foods.length > 50 && (
+          <div className="small" style={{ marginTop: 8 }}>
+            … y {foods.length - 50} más
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function MealBlock({
+function Field({
   label,
   value,
-  platos,
   onChange,
-  isOpen,
-  isLoading,
-  items,
-  error,
-  onToggle,
+  disabled,
 }: {
   label: string;
-  value: string | null;
-  platos: string[];
+  value: string;
   onChange: (v: string | null) => void;
-  isOpen: boolean;
-  isLoading: boolean;
-  items: VPlatoItem[];
-  error?: string;
-  onToggle: () => void;
+  disabled?: boolean;
 }) {
-  const totals = useMemo(() => {
-    return items.reduce(
-      (acc, curr) => ({
-        kcal: acc.kcal + (curr.kcal || 0),
-        p: acc.p + (curr.proteinas_g || 0),
-        c: acc.c + (curr.carbs_g || 0),
-        f: acc.f + (curr.grasas_g || 0),
-      }),
-      { kcal: 0, p: 0, c: 0, f: 0 }
-    );
-  }, [items]);
-
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <span className="small" style={{ textTransform: "capitalize", fontWeight: "bold" }}>{label}</span>
-        <button className="btn small" onClick={onToggle} style={{ fontSize: 10 }}>
-          {isOpen ? "Ocultar" : "Detalle"}
-        </button>
+    <div>
+      <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
+        {label}
       </div>
-
-      <select className="input" value={value || ""} onChange={(e) => onChange(e.target.value || null)}>
-        <option value="">— Seleccionar —</option>
-        {platos.map((p) => <option key={p} value={p}>{p}</option>)}
-      </select>
-
-      {isOpen && (
-        <div className="card" style={{ background: "rgba(255,255,255,0.05)", marginTop: 5, padding: 8 }}>
-          {isLoading ? (
-            <div className="small">Cargando...</div>
-          ) : error ? (
-            <div className="small color-danger">{error}</div>
-          ) : !items.length ? (
-            <div className="small">Sin items (revisa que el plato exista y que la vista devuelva filas).</div>
-          ) : (
-            <>
-              <div className="row" style={{ gap: 5, marginBottom: 8, flexWrap: "wrap" }}>
-                <span className="badge">K: {r1(totals.kcal)}</span>
-                <span className="badge">P: {r1(totals.p)}</span>
-                <span className="badge">C: {r1(totals.c)}</span>
-                <span className="badge">G: {r1(totals.f)}</span>
-              </div>
-
-              {items.map((it, idx) => (
-                <div
-                  key={`${it.plato_id}__${it.tipo_item}__${idx}`}
-                  className="small"
-                  style={{ borderBottom: "1px solid #333", padding: "6px 0" }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 800 }}>{it.alimento_nombre}</div>
-                    <div className="badge">{it.g ?? "—"} g</div>
-                  </div>
-
-                  <div className="row" style={{ gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                    <span className="badge">K: {r1(it.kcal)}</span>
-                    <span className="badge">P: {r1(it.proteinas_g)}</span>
-                    <span className="badge">C: {r1(it.carbs_g)}</span>
-                    <span className="badge">G: {r1(it.grasas_g)}</span>
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
-        </div>
-      )}
+      <input
+        className="input"
+        value={value}
+        onChange={(e) => onChange(e.target.value || null)}
+        disabled={disabled}
+        placeholder={`Ej: ${label}`}
+      />
     </div>
   );
 }
