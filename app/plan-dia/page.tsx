@@ -1,309 +1,240 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
+import { ensurePlanDay } from "@/lib/plan";
 
-/**
- * app/editor-platos/page.tsx
- * ✅ FIX: columnas con tilde en select() -> usar comillas dobles o alias
- * Aquí uso ALIAS para evitar tildes en TypeScript: "Ración_normal_g":racion_normal_g
- */
-
-// --- TIPOS ---
-type TipoDia = "entreno" | "descanso";
-type ComidaKey = "desayuno" | "comida" | "merienda" | "cena";
-
-type Plato = {
-  id: string;
-  plato: string;
-  tipo_dia: TipoDia;
-  comida: ComidaKey;
-  proteina: string | null;
-  carbohidrato2: string | null;
-  grasa: string | null;
-  extra: string | null;
-  extra2: string | null;
+type Settings = {
+  kcal_train: number;
+  kcal_rest: number;
+  prot_g: number | null;
+  carb_g: number | null;
+  fat_g: number | null;
 };
 
-type Alimento = {
-  id: string;
-  Alimento: string;
-  racion_normal_g: number | null; // ✅ alias
+type DayRow = {
+  day: string; // YYYY-MM-DD
+  day_type: "train" | "rest";
+  kcal: number;
+  prot: number;
+  carb: number;
+  fat: number;
 };
 
-export default function EditorPlatosPage() {
+function pad2(n: number) {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+function toISODate(d: Date) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// Lunes como inicio de semana
+function startOfWeekMonday(date: Date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0 domingo, 1 lunes...
+  const diff = day === 0 ? -6 : 1 - day; // si domingo => retrocede 6
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date: Date, n: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+const WEEKDAY_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+export default function PlanDiaWeekPage() {
   return (
     <AuthGate>
-      <EditorPlatosInner />
+      <Inner />
     </AuthGate>
   );
 }
 
-function EditorPlatosInner() {
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<string>("");
+function Inner() {
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [days, setDays] = useState<DayRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [anchor, setAnchor] = useState<Date>(() => new Date()); // fecha “actual” para esa semana
 
-  const [platos, setPlatos] = useState<Plato[]>([]);
-  const [foods, setFoods] = useState<Alimento[]>([]);
+  const week = useMemo(() => {
+    const start = startOfWeekMonday(anchor);
+    const arr = Array.from({ length: 7 }).map((_, i) => {
+      const d = addDays(start, i);
+      return { date: d, iso: toISODate(d), label: WEEKDAY_ES[i] };
+    });
+    return { start, arr };
+  }, [anchor]);
 
-  const [selectedPlatoId, setSelectedPlatoId] = useState<string>("");
-
-  const selectedPlato = useMemo(
-    () => platos.find((p) => p.id === selectedPlatoId) || null,
-    [platos, selectedPlatoId]
-  );
-
-  async function loadAll() {
+  async function load() {
     setLoading(true);
-    setStatus("");
 
-    try {
-      // --- 1) PLATOS ---
-      const { data: p, error: pErr } = await supabase
-        .from("stg_platos")
-        .select("id, plato, tipo_dia, comida, proteina, carbohidrato2, grasa, extra, extra2")
-        .order("plato", { ascending: true });
+    const { data: userWrap } = await supabase.auth.getUser();
+    const user = userWrap?.user;
+    if (!user) return;
 
-      if (pErr) throw pErr;
+    // 1) Settings
+    const { data: s } = await supabase
+      .from("user_settings")
+      .select("kcal_train,kcal_rest,prot_g,carb_g,fat_g")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    setSettings((s as any) ?? null);
 
-      // --- 2) FOODS ---
-      // ✅ Columna con tilde: "Ración_normal_g" -> comillas + alias
-      const { data: f, error: fErr } = await supabase
-        .from("stg_foods")
-        .select('id, "Alimento", "Ración_normal_g":racion_normal_g')
-        .order("Alimento", { ascending: true });
-
-      if (fErr) throw fErr;
-
-      if (p) setPlatos(p as Plato[]);
-      if (f) setFoods(f as Alimento[]);
-
-      if (!selectedPlatoId && p?.length) setSelectedPlatoId(p[0].id);
-
-      setStatus("Datos cargados ✅");
-    } catch (e: any) {
-      setStatus("Error: " + (e?.message ?? String(e)));
-    } finally {
-      setLoading(false);
+    // 2) Asegurar que existan los 7 plan_days (y comidas) sin romper nada
+    // (por defecto los ponemos "train" si no existen; luego podrás cambiar day_type desde UI)
+    for (const x of week.arr) {
+      await ensurePlanDay(x.iso, "train");
     }
+
+    // 3) Leer totales de la semana desde la vista
+    const from = week.arr[0].iso;
+    const to = week.arr[6].iso;
+
+    const { data: rows, error } = await supabase
+      .from("v_day_totals")
+      .select("day, day_type, kcal, prot, carb, fat")
+      .eq("user_id", user.id)
+      .gte("day", from)
+      .lte("day", to)
+      .order("day", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      setDays([]);
+    } else {
+      setDays((rows as any) ?? []);
+    }
+
+    setLoading(false);
   }
 
   useEffect(() => {
-    loadAll();
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [anchor]);
 
-  function patchSelected(patch: Partial<Plato>) {
-    if (!selectedPlato) return;
-    setPlatos((prev) => prev.map((x) => (x.id === selectedPlato.id ? { ...x, ...patch } : x)));
+  function kcalTargetFor(dayType: "train" | "rest") {
+    if (!settings) return 0;
+    return dayType === "train" ? settings.kcal_train : settings.kcal_rest;
   }
 
-  async function saveSelected() {
-    if (!selectedPlato) return;
-    setLoading(true);
-    setStatus("");
+  const weekTotals = useMemo(() => {
+    return days.reduce(
+      (acc, d) => ({
+        kcal: acc.kcal + (d.kcal ?? 0),
+        prot: acc.prot + (d.prot ?? 0),
+        carb: acc.carb + (d.carb ?? 0),
+        fat: acc.fat + (d.fat ?? 0),
+      }),
+      { kcal: 0, prot: 0, carb: 0, fat: 0 }
+    );
+  }, [days]);
 
-    try {
-      const payload = {
-        id: selectedPlato.id,
-        plato: selectedPlato.plato,
-        tipo_dia: selectedPlato.tipo_dia,
-        comida: selectedPlato.comida,
-        proteina: selectedPlato.proteina,
-        carbohidrato2: selectedPlato.carbohidrato2,
-        grasa: selectedPlato.grasa,
-        extra: selectedPlato.extra,
-        extra2: selectedPlato.extra2,
-      };
-
-      const { error } = await supabase.from("stg_platos").upsert(payload, { onConflict: "id" });
-      if (error) throw error;
-
-      setStatus("Guardado ✅");
-    } catch (e: any) {
-      setStatus("Error: " + (e?.message ?? String(e)));
-    } finally {
-      setLoading(false);
-    }
-  }
+  if (loading) return <div className="card">Cargando semana…</div>;
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div className="card">
-        <h1 className="h1">Editor de platos</h1>
-        <div className="row" style={{ gap: 10 }}>
-          <button className="btn" onClick={loadAll} disabled={loading}>
-            Recargar
-          </button>
-          <button className="btn primary" onClick={saveSelected} disabled={loading || !selectedPlato}>
-            Guardar
-          </button>
-        </div>
-        {status && (
-          <div className="small" style={{ marginTop: 8 }}>
-            {status}
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="row" style={{ gap: 10, alignItems: "center" }}>
-          <div style={{ minWidth: 260 }}>
-            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
-              Plato
-            </div>
-            <select
-              className="input"
-              value={selectedPlatoId}
-              onChange={(e) => setSelectedPlatoId(e.target.value)}
-              disabled={loading}
-            >
-              {platos.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.plato}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ flex: 1 }}>
-            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
-              Nombre
-            </div>
-            <input
-              className="input"
-              value={selectedPlato?.plato ?? ""}
-              onChange={(e) => patchSelected({ plato: e.target.value })}
-              disabled={!selectedPlato || loading}
-            />
+    <div className="stack">
+      <div className="card row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div className="h2">Plan semanal</div>
+          <div className="muted">
+            {week.arr[0].iso} → {week.arr[6].iso}
           </div>
         </div>
 
-        <div className="row" style={{ gap: 10, marginTop: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
-              Tipo día
-            </div>
-            <select
-              className="input"
-              value={selectedPlato?.tipo_dia ?? "entreno"}
-              onChange={(e) => patchSelected({ tipo_dia: e.target.value as TipoDia })}
-              disabled={!selectedPlato || loading}
-            >
-              <option value="entreno">entreno</option>
-              <option value="descanso">descanso</option>
-            </select>
-          </div>
-
-          <div style={{ flex: 1 }}>
-            <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
-              Comida
-            </div>
-            <select
-              className="input"
-              value={selectedPlato?.comida ?? "desayuno"}
-              onChange={(e) => patchSelected({ comida: e.target.value as ComidaKey })}
-              disabled={!selectedPlato || loading}
-            >
-              <option value="desayuno">desayuno</option>
-              <option value="comida">comida</option>
-              <option value="merienda">merienda</option>
-              <option value="cena">cena</option>
-            </select>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-          <Field
-            label="Proteína"
-            value={selectedPlato?.proteina ?? ""}
-            onChange={(v) => patchSelected({ proteina: v })}
-            disabled={!selectedPlato || loading}
-          />
-          <Field
-            label="Carbohidrato2"
-            value={selectedPlato?.carbohidrato2 ?? ""}
-            onChange={(v) => patchSelected({ carbohidrato2: v })}
-            disabled={!selectedPlato || loading}
-          />
-          <Field
-            label="Grasa"
-            value={selectedPlato?.grasa ?? ""}
-            onChange={(v) => patchSelected({ grasa: v })}
-            disabled={!selectedPlato || loading}
-          />
-          <Field
-            label="Extra"
-            value={selectedPlato?.extra ?? ""}
-            onChange={(v) => patchSelected({ extra: v })}
-            disabled={!selectedPlato || loading}
-          />
-          <Field
-            label="Extra2"
-            value={selectedPlato?.extra2 ?? ""}
-            onChange={(v) => patchSelected({ extra2: v })}
-            disabled={!selectedPlato || loading}
-          />
+        <div className="row gap">
+          <button className="btn" onClick={() => setAnchor(addDays(anchor, -7))}>← Semana</button>
+          <button className="btn" onClick={() => setAnchor(new Date())}>Hoy</button>
+          <button className="btn" onClick={() => setAnchor(addDays(anchor, 7))}>Semana →</button>
         </div>
       </div>
 
       <div className="card">
-        <h2 className="h2">stg_foods</h2>
-        <div className="small" style={{ marginBottom: 8 }}>
-          Alimentos: <b>{foods.length}</b>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div className="h3">Totales semana</div>
+          <div className="muted">
+            {weekTotals.kcal.toFixed(0)} kcal · P {weekTotals.prot.toFixed(0)} · C {weekTotals.carb.toFixed(0)} · G {weekTotals.fat.toFixed(0)}
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="thead" style={{ display: "grid", gridTemplateColumns: "90px 1fr 120px 120px", gap: 10 }}>
+          <div>Día</div>
+          <div>Resumen</div>
+          <div>Objetivo</div>
+          <div></div>
         </div>
 
-        <div style={{ display: "grid", gap: 6 }}>
-          {foods.slice(0, 50).map((f) => (
+        {week.arr.map((w) => {
+          const row = days.find((d) => d.day === w.iso) ?? {
+            day: w.iso,
+            day_type: "train" as const,
+            kcal: 0,
+            prot: 0,
+            carb: 0,
+            fat: 0,
+          };
+
+          const target = kcalTargetFor(row.day_type);
+          const diff = row.kcal - target;
+
+          return (
             <div
-              key={f.id}
-              className="row"
+              key={w.iso}
+              className="trow"
               style={{
-                justifyContent: "space-between",
-                borderBottom: "1px solid #333",
-                padding: "6px 0",
+                display: "grid",
+                gridTemplateColumns: "90px 1fr 120px 120px",
+                gap: 10,
+                alignItems: "center",
+                padding: "10px 0",
+                borderTop: "1px solid rgba(255,255,255,0.08)",
               }}
             >
-              <div style={{ fontWeight: 800 }}>{f.Alimento}</div>
-              <div className="badge">{f.racion_normal_g ?? "—"} g</div>
+              <div>
+                <div style={{ fontWeight: 700 }}>{w.label}</div>
+                <div className="muted">{w.iso}</div>
+              </div>
+
+              <div>
+                <div>
+                  <b>{row.kcal.toFixed(0)}</b> kcal{" "}
+                  <span className="muted">
+                    · P {row.prot.toFixed(0)} · C {row.carb.toFixed(0)} · G {row.fat.toFixed(0)}
+                  </span>
+                </div>
+                <div className="muted">
+                  Tipo: {row.day_type === "train" ? "Entreno" : "Descanso"} ·{" "}
+                  {diff >= 0 ? `+${diff.toFixed(0)}` : diff.toFixed(0)} kcal
+                </div>
+              </div>
+
+              <div>
+                <div><b>{target}</b> kcal</div>
+                <div className="muted">obj. día</div>
+              </div>
+
+              <div style={{ textAlign: "right" }}>
+                <Link className="btn" href={`/plan-dia/${w.iso}`}>
+                  Ver día →
+                </Link>
+              </div>
             </div>
-          ))}
-        </div>
-
-        {foods.length > 50 && (
-          <div className="small" style={{ marginTop: 8 }}>
-            … y {foods.length - 50} más
-          </div>
-        )}
+          );
+        })}
       </div>
-    </div>
-  );
-}
 
-function Field({
-  label,
-  value,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string | null) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div>
-      <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
-        {label}
+      <div className="card muted">
+        Esta vista es el control semanal. La edición detallada (alimentos, gramos, recetas) se hace dentro de cada día.
       </div>
-      <input
-        className="input"
-        value={value}
-        onChange={(e) => onChange(e.target.value || null)}
-        disabled={disabled}
-        placeholder={`Ej: ${label}`}
-      />
     </div>
   );
 }
