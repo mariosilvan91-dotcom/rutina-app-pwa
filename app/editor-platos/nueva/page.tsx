@@ -1,18 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
-import Link from "next/link";
 
-/* dentro del JSX */
-<Link
-  href={`/alimentos/nuevo?name=${encodeURIComponent(ingredient)}`}
-  className="btn"
-  style={{ marginTop: 6 }}
->
-  ➕ Añadir ingrediente a la lista
-</Link>
 type Food = {
   id: string;
   name: string;
@@ -110,6 +102,8 @@ function NuevaRecetaInner() {
       carb_100: aiData.carb_100,
       fat_100: aiData.fat_100,
       ration_norm: aiData.ration_norm,
+      // el resto de columnas existen pero de momento no las usamos:
+      // type, notes, ration_min, ration_max
     });
 
     if (error) {
@@ -138,6 +132,15 @@ function NuevaRecetaInner() {
           placeholder="Escribe un ingrediente…"
         />
 
+        {/* ✅ LINK BIEN PUESTO (DENTRO DEL JSX) */}
+        <Link
+          href={`/alimentos/nuevo?name=${encodeURIComponent(ingredient || "")}`}
+          className="btn"
+          style={{ marginTop: 6, display: "inline-flex" }}
+        >
+          ➕ Añadir ingrediente a la lista
+        </Link>
+
         {open && (
           <div
             className="card"
@@ -152,21 +155,23 @@ function NuevaRecetaInner() {
           >
             {results.length > 0 ? (
               results.map((f) => (
-                <div key={f.id} className="small">
+                <div
+                  key={f.id}
+                  className="small"
+                  style={{ padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}
+                  onClick={() => {
+                    setIngredient(f.name);
+                    setOpen(false);
+                  }}
+                >
                   {f.name} · {f.kcal_100} kcal/100g
                 </div>
               ))
             ) : (
               <div className="stack">
-                <div className="small muted">
-                  No existe el ingrediente en la base.
-                </div>
+                <div className="small muted">No existe el ingrediente en la base.</div>
 
-                <button
-                  className="btn"
-                  onClick={calcWithAI}
-                  disabled={aiLoading}
-                >
+                <button className="btn" onClick={calcWithAI} disabled={aiLoading || !clean(ingredient)}>
                   {aiLoading ? "Calculando…" : "Calcular macros con IA"}
                 </button>
 
@@ -176,12 +181,9 @@ function NuevaRecetaInner() {
                       <b>{aiData.name}</b>
                     </div>
                     <div className="small">
-                      {aiData.kcal_100} kcal · P {aiData.prot_100} · C{" "}
-                      {aiData.carb_100} · G {aiData.fat_100}
+                      {aiData.kcal_100} kcal · P {aiData.prot_100} · C {aiData.carb_100} · G {aiData.fat_100}
                     </div>
-                    <div className="small">
-                      Ración sugerida: {aiData.ration_norm} g
-                    </div>
+                    <div className="small">Ración sugerida: {aiData.ration_norm} g</div>
 
                     <button className="btn primary" onClick={saveFood}>
                       Añadir a ingredientes
