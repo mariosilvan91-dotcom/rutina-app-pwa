@@ -3,7 +3,16 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
+import Link from "next/link";
 
+/* dentro del JSX */
+<Link
+  href={`/alimentos/nuevo?name=${encodeURIComponent(ingredient)}`}
+  className="btn"
+  style={{ marginTop: 6 }}
+>
+  ➕ Añadir ingrediente a la lista
+</Link>
 type Food = {
   id: string;
   name: string;
