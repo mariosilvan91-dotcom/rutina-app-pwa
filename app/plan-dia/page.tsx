@@ -4,13 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
 
-/**
- * Editor de platos (ejemplo) - Arreglado:
- * - select de columnas con tilde usando comillas dobles
- * - alias opcional para evitar tildes en TS
- */
-
-// ✅ Tipos
+// --- Tipos ---
 type TipoDia = "entreno" | "descanso";
 type ComidaKey = "desayuno" | "comida" | "merienda" | "cena";
 
@@ -26,7 +20,7 @@ type Plato = {
   extra2: string | null;
 };
 
-// ✅ Opción recomendada: alias de la columna con tilde → racion_normal_g
+// ✅ Usamos alias para evitar tildes en TS
 type Alimento = {
   id: string;
   Alimento: string;
@@ -49,6 +43,7 @@ function EditorPlatosInner() {
   const [foods, setFoods] = useState<Alimento[]>([]);
 
   const [selectedPlatoId, setSelectedPlatoId] = useState<string>("");
+
   const selectedPlato = useMemo(
     () => platos.find((p) => p.id === selectedPlatoId) || null,
     [platos, selectedPlatoId]
@@ -59,7 +54,7 @@ function EditorPlatosInner() {
     setStatus("");
 
     try {
-      // 1) Platos (staging)
+      // 1) Platos
       const { data: p, error: pErr } = await supabase
         .from("stg_platos")
         .select("id, plato, tipo_dia, comida, proteina, carbohidrato2, grasa, extra, extra2")
@@ -67,7 +62,8 @@ function EditorPlatosInner() {
 
       if (pErr) throw pErr;
 
-      // 2) Foods (stg_foods) - ✅ columnas con tilde entre comillas + alias
+      // 2) Foods (✅ comillas + alias)
+      // OJO: "Ración_normal_g" tiene tilde => SIEMPRE entre comillas dobles
       const { data: f, error: fErr } = await supabase
         .from("stg_foods")
         .select('id, "Alimento", "Ración_normal_g":racion_normal_g')
@@ -78,8 +74,9 @@ function EditorPlatosInner() {
       if (p) setPlatos(p as Plato[]);
       if (f) setFoods(f as Alimento[]);
 
-      // auto-selección
+      // auto-select
       if (!selectedPlatoId && p?.length) setSelectedPlatoId(p[0].id);
+
       setStatus("Datos cargados ✅");
     } catch (e: any) {
       setStatus("Error: " + (e?.message ?? String(e)));
@@ -100,6 +97,7 @@ function EditorPlatosInner() {
 
   async function saveSelected() {
     if (!selectedPlato) return;
+
     setLoading(true);
     setStatus("");
 
@@ -144,7 +142,7 @@ function EditorPlatosInner() {
 
       <div className="card">
         <div className="row" style={{ gap: 10, alignItems: "center" }}>
-          <div style={{ minWidth: 220 }}>
+          <div style={{ minWidth: 240 }}>
             <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>Plato</div>
             <select
               className="input"
@@ -215,15 +213,25 @@ function EditorPlatosInner() {
         <div className="small" style={{ marginBottom: 8 }}>
           Mostrando <b>{foods.length}</b> alimentos. (ración normal en gramos)
         </div>
+
         <div style={{ display: "grid", gap: 6 }}>
-          {foods.slice(0, 30).map((f) => (
-            <div key={f.id} className="row" style={{ justifyContent: "space-between", borderBottom: "1px solid #333", padding: "6px 0" }}>
+          {foods.slice(0, 40).map((f) => (
+            <div
+              key={f.id}
+              className="row"
+              style={{ justifyContent: "space-between", borderBottom: "1px solid #333", padding: "6px 0" }}
+            >
               <div style={{ fontWeight: 700 }}>{f.Alimento}</div>
               <div className="badge">{f.racion_normal_g ?? "—"} g</div>
             </div>
           ))}
         </div>
-        {foods.length > 30 && <div className="small" style={{ marginTop: 8 }}>… y {foods.length - 30} más</div>}
+
+        {foods.length > 40 && (
+          <div className="small" style={{ marginTop: 8 }}>
+            … y {foods.length - 40} más
+          </div>
+        )}
       </div>
     </div>
   );
