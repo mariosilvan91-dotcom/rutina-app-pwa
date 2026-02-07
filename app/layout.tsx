@@ -14,20 +14,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es">
       <body>
         <div className="container">
-          <div className="nav">
-            <Link href="/" className="">Hoy</Link>
-            <Link href="/historia">Histórico</Link>
+          {/* Navegación optimizada */}
+          <div className="nav" style={{ 
+            display: "flex", 
+            flexWrap: "wrap", 
+            gap: "10px", 
+            marginBottom: "20px" 
+          }}>
+            <Link href="/">Hoy</Link>
             <Link href="/plan-dia">Plan día</Link>
-            <Link href="/plan-deporte">Plan deporte</Link>
+            <Link href="/editor-platos">🍳 Recetas</Link> {/* Nueva pestaña */}
+            <Link href="/historia">Histórico</Link>
+            <Link href="/plan-deporte">Deporte</Link>
             <Link href="/alimentos">Alimentos</Link>
-            <Link href="/platos">Platos</Link>
+            <Link href="/platos">Catálogo</Link>
             <Link href="/ajustes">Ajustes</Link>
             <Link href="/cuenta">Cuenta</Link>
           </div>
+
           <Suspense fallback={<div className="card">Cargando…</div>}>
             {children}
           </Suspense>
-          <p className="small" style={{marginTop:16}}>Tip: en móvil abre en Safari/Chrome → Compartir → “Añadir a pantalla de inicio”.</p>
+
+          <footer style={{ marginTop: 24, borderTop: "1px solid #333", paddingTop: 16 }}>
+            <p className="small">
+              Tip: en móvil abre en Safari/Chrome → Compartir → “Añadir a pantalla de inicio”.
+            </p>
+          </footer>
         </div>
       </body>
     </html>
