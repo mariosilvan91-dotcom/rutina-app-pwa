@@ -1,16 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
+
+type TipoDia = "entreno" | "descanso";
+type Comida = "desayuno" | "comida" | "merienda" | "cena";
+
+type FoodOption = {
+  id: string;
+  name: string;
+  default_portion_g: number | null;
+};
 
 function clean(s: string) {
   return s.trim().replace(/\s+/g, " ");
 }
 
-type TipoDia = "entreno" | "descanso";
-type Comida = "desayuno" | "comida" | "merienda" | "cena";
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState<T>(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 export default function NuevaRecetaPage() {
   return (
@@ -23,6 +38,7 @@ export default function NuevaRecetaPage() {
 function NuevaRecetaInner() {
   const [plato, setPlato] = useState("");
 
+  // Si tu tabla stg_platos NO tiene estas columnas, dímelo y las quito.
   const [tipoDia, setTipoDia] = useState<TipoDia>("entreno");
   const [comida, setComida] = useState<Comida>("comida");
 
@@ -43,37 +59,12 @@ function NuevaRecetaInner() {
       return;
     }
 
-    const base = {
+    setLoading(true);
+
+    const payload: any = {
       plato: platoClean,
       tipo_dia: tipoDia,
       comida,
-    };
-
-    // intento A: plural ingredientes_1..5
-    const payloadPlural: any = {
-      ...base,
-      ingredientes_1: clean(i1) || null,
-      ingredientes_2: clean(i2) || null,
-      ingredientes_3: clean(i3) || null,
-      ingredientes_4: clean(i4) || null,
-      ingredientes_5: clean(i5) || null,
-    };
-
-    setLoading(true);
-
-    const { error: e1 } = await supabase.from("stg_platos").insert(payloadPlural);
-
-    if (!e1) {
-      setMsg("Receta guardada ✅");
-      setLoading(false);
-      setPlato("");
-      setI1(""); setI2(""); setI3(""); setI4(""); setI5("");
-      return;
-    }
-
-    // si falló por columnas, reintentar B: singular ingrediente_1..5
-    const payloadSingular: any = {
-      ...base,
       ingrediente_1: clean(i1) || null,
       ingrediente_2: clean(i2) || null,
       ingrediente_3: clean(i3) || null,
@@ -81,18 +72,22 @@ function NuevaRecetaInner() {
       ingrediente_5: clean(i5) || null,
     };
 
-    const { error: e2 } = await supabase.from("stg_platos").insert(payloadSingular);
+    const { error } = await supabase.from("stg_platos").insert(payload);
 
     setLoading(false);
 
-    if (e2) {
-      setMsg("Error guardando receta: " + e2.message);
+    if (error) {
+      setMsg("Error guardando receta: " + error.message);
       return;
     }
 
-    setMsg("Receta guardada ✅ (modo singular)");
+    setMsg("Receta guardada ✅");
     setPlato("");
-    setI1(""); setI2(""); setI3(""); setI4(""); setI5("");
+    setI1("");
+    setI2("");
+    setI3("");
+    setI4("");
+    setI5("");
   }
 
   return (
@@ -101,10 +96,6 @@ function NuevaRecetaInner() {
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           <h1 className="h1" style={{ margin: 0 }}>Nueva receta</h1>
           <Link className="btn" href="/recetas">← Volver</Link>
-        </div>
-
-        <div className="small muted" style={{ marginTop: 8 }}>
-          Guarda en <b>stg_platos</b> con tipo_dia + comida (para que luego tu Plan semanal pueda usarlo).
         </div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
@@ -139,18 +130,18 @@ function NuevaRecetaInner() {
           </div>
 
           <div className="card" style={{ background: "rgba(255,255,255,0.04)" }}>
-            <div className="h3">Ingredientes (hasta 5)</div>
+            <div className="h3">Ingredientes (autocompletar)</div>
 
-            <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-              <Ing label="Ingrediente 1" value={i1} setValue={setI1} />
-              <Ing label="Ingrediente 2" value={i2} setValue={setI2} />
-              <Ing label="Ingrediente 3" value={i3} setValue={setI3} />
-              <Ing label="Ingrediente 4" value={i4} setValue={setI4} />
-              <Ing label="Ingrediente 5" value={i5} setValue={setI5} />
+            <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
+              <FoodAutocomplete label="Ingrediente 1" value={i1} onChange={setI1} />
+              <FoodAutocomplete label="Ingrediente 2" value={i2} onChange={setI2} />
+              <FoodAutocomplete label="Ingrediente 3" value={i3} onChange={setI3} />
+              <FoodAutocomplete label="Ingrediente 4" value={i4} onChange={setI4} />
+              <FoodAutocomplete label="Ingrediente 5" value={i5} onChange={setI5} />
             </div>
 
             <div className="small muted" style={{ marginTop: 8 }}>
-              Consejo: escribe el ingrediente exactamente como aparece en <b>foods_base.name</b> para que la calculadora lo encuentre.
+              Escribe y selecciona de la lista para que coincida con <b>foods_base.name</b>.
             </div>
           </div>
 
@@ -179,11 +170,138 @@ function NuevaRecetaInner() {
   );
 }
 
-function Ing({ label, value, setValue }: { label: string; value: string; setValue: (v: string) => void }) {
+function FoodAutocomplete({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [opts, setOpts] = useState<FoodOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const debounced = useDebouncedValue(value, 220);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  // cerrar si click fuera
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target as any)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  useEffect(() => {
+    const q = clean(debounced);
+    if (!q) {
+      setOpts([]);
+      setErr("");
+      setLoading(false);
+      return;
+    }
+
+    (async () => {
+      setLoading(true);
+      setErr("");
+
+      // Filtrado rápido por foods_base
+      const { data, error } = await supabase
+        .from("foods_base")
+        .select("id, name, default_portion_g")
+        .ilike("name", `%${q}%`)
+        .order("name", { ascending: true })
+        .limit(8);
+
+      if (error) {
+        setErr(error.message);
+        setOpts([]);
+      } else {
+        setOpts((data as any[]) as FoodOption[]);
+      }
+
+      setLoading(false);
+    })();
+  }, [debounced]);
+
+  const hint = useMemo(() => {
+    if (!clean(value)) return "";
+    const exact = opts.find((o) => o.name === clean(value));
+    if (exact?.default_portion_g != null) return `Ración: ${exact.default_portion_g} g`;
+    return "";
+  }, [opts, value]);
+
   return (
-    <div>
+    <div ref={boxRef} style={{ position: "relative" }}>
       <label className="small">{label}</label>
-      <input className="input" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Ej: Arroz blanco" />
+
+      <input
+        className="input"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Enter" && open && opts.length > 0) {
+            e.preventDefault();
+            onChange(opts[0].name);
+            setOpen(false);
+          }
+        }}
+        placeholder="Empieza a escribir… (ej: Arroz)"
+        autoComplete="off"
+      />
+
+      <div className="small muted" style={{ marginTop: 4, minHeight: 16 }}>
+        {err ? <span className="color-danger">{err}</span> : loading ? "Buscando…" : hint}
+      </div>
+
+      {open && (opts.length > 0) && (
+        <div
+          className="card"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: "100%",
+            marginTop: 6,
+            padding: 8,
+            zIndex: 30,
+            background: "#0b1220",
+            border: "1px solid rgba(255,255,255,0.12)",
+          }}
+        >
+          {opts.map((o) => (
+            <button
+              key={o.id}
+              className="btn"
+              style={{
+                width: "100%",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+              onClick={() => {
+                onChange(o.name);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <span style={{ textAlign: "left" }}>{o.name}</span>
+              <span className="small muted">
+                {o.default_portion_g != null ? `${o.default_portion_g} g` : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
