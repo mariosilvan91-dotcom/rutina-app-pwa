@@ -36,7 +36,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           <footer style={{ marginTop: 24, borderTop: "1px solid #333", paddingTop: 16 }}>
             <p className="small">
-              Tip: en móvil abre en Safari/Chrome → Compartir → “Añadir a pantalla de inicio”.
             </p>
           </footer>
         </div>
