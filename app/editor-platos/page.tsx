@@ -18,11 +18,11 @@ type FoodBase = {
 };
 
 type IngredientSlotKey =
-  | "ingredientes_1"
-  | "ingredientes_2"
-  | "ingredientes_3"
-  | "ingredientes_4"
-  | "ingredientes_5";
+  | "ingrediente_1"
+  | "ingrediente_2"
+  | "ingrediente_3"
+  | "ingrediente_4"
+  | "ingrediente_5";
 
 type IngredientRow = {
   slot: IngredientSlotKey;
@@ -44,11 +44,11 @@ function cleanName(s: string) {
 }
 
 const SLOTS: { key: IngredientSlotKey; label: string }[] = [
-  { key: "ingredientes_1", label: "Ingrediente 1" },
-  { key: "ingredientes_2", label: "Ingrediente 2" },
-  { key: "ingredientes_3", label: "Ingrediente 3" },
-  { key: "ingredientes_4", label: "Ingrediente 4" },
-  { key: "ingredientes_5", label: "Ingrediente 5" },
+  { key: "ingrediente_1", label: "Ingrediente 1" },
+  { key: "ingrediente_2", label: "Ingrediente 2" },
+  { key: "ingrediente_3", label: "Ingrediente 3" },
+  { key: "ingrediente_4", label: "Ingrediente 4" },
+  { key: "ingrediente_5", label: "Ingrediente 5" },
 ];
 
 export default function RecetasPage() {
@@ -69,7 +69,7 @@ function RecetasInner() {
   const [rows, setRows] = useState<IngredientRow[]>([]);
   const [notFound, setNotFound] = useState<string[]>([]);
 
-  // 🔹 cargar lista de recetas
+  // 🔹 Cargar lista de recetas
   useEffect(() => {
     (async () => {
       setMsg("");
@@ -93,7 +93,7 @@ function RecetasInner() {
     })();
   }, []);
 
-  // 🔹 cargar receta + ingredientes
+  // 🔹 Cargar receta + ingredientes
   useEffect(() => {
     if (!selectedPlatoId) {
       setRows([]);
@@ -108,12 +108,11 @@ function RecetasInner() {
       setRows([]);
       setNotFound([]);
 
-      const sel =
-        "id, plato, ingredientes_1, ingredientes_2, ingredientes_3, ingredientes_4, ingredientes_5";
-
       const { data: p, error } = await supabase
         .from("stg_platos")
-        .select(sel)
+        .select(
+          "id, plato, ingrediente_1, ingrediente_2, ingrediente_3, ingrediente_4, ingrediente_5"
+        )
         .eq("id", selectedPlatoId)
         .maybeSingle();
 
@@ -126,7 +125,7 @@ function RecetasInner() {
       const candidates: { slot: IngredientSlotKey; label: string; foodName: string }[] = [];
 
       for (let i = 1; i <= 5; i++) {
-        const key = `ingredientes_${i}` as IngredientSlotKey;
+        const key = `ingrediente_${i}` as IngredientSlotKey;
         const val = cleanName(String((p as any)[key] ?? ""));
         if (val) {
           candidates.push({
@@ -147,7 +146,9 @@ function RecetasInner() {
 
       const { data: foods, error: ef } = await supabase
         .from("foods_base")
-        .select("id, name, kcal_100, prot_100, carb_100, fat_100, default_portion_g")
+        .select(
+          "id, name, kcal_100, prot_100, carb_100, fat_100, default_portion_g"
+        )
         .in("name", names);
 
       if (ef) {
@@ -176,7 +177,7 @@ function RecetasInner() {
     })();
   }, [selectedPlatoId]);
 
-  // 🔹 cálculo de macros
+  // 🔹 Cálculo de macros
   const calc = useMemo(() => {
     const line = rows.map((r) => {
       const g = n(r.grams);
@@ -233,16 +234,8 @@ function RecetasInner() {
             ))}
           </select>
 
-          {loading && (
-            <div className="small" style={{ marginTop: 8 }}>
-              Cargando…
-            </div>
-          )}
-          {msg && (
-            <div className="small" style={{ marginTop: 8 }}>
-              {msg}
-            </div>
-          )}
+          {loading && <div className="small" style={{ marginTop: 8 }}>Cargando…</div>}
+          {msg && <div className="small" style={{ marginTop: 8 }}>{msg}</div>}
         </div>
       </div>
 
@@ -257,8 +250,7 @@ function RecetasInner() {
 
           {notFound.length > 0 && (
             <div className="small color-danger" style={{ marginTop: 10 }}>
-              No encontrados en foods_base (deben coincidir exacto):{" "}
-              {notFound.join(", ")}
+              No encontrados en foods_base (deben coincidir exacto): {notFound.join(", ")}
             </div>
           )}
 
@@ -273,9 +265,7 @@ function RecetasInner() {
                 onChange={(e) =>
                   setRows((prev) =>
                     prev.map((x) =>
-                      x.slot === r.slot
-                        ? { ...x, grams: n(e.target.value) }
-                        : x
+                      x.slot === r.slot ? { ...x, grams: n(e.target.value) } : x
                     )
                   )
                 }
