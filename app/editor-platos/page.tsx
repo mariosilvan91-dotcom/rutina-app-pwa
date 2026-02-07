@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabaseClient";
@@ -92,7 +93,7 @@ function RecetasInner() {
       } else {
         const seen = new Set<string>();
         const clean = (data ?? []).filter(
-          (x) => x.id && !seen.has(x.id) && seen.add(x.id)
+          (x: any) => x.id && !seen.has(x.id) && seen.add(x.id)
         );
         setPlatos(clean as StgPlatoListRow[]);
       }
@@ -150,15 +151,20 @@ function RecetasInner() {
 
       const names = [...new Set(candidates.map((c) => c.foodName))];
 
-      const { data: foods } = await supabase
+      const { data: foods, error: eFoods } = await supabase
         .from("foods_base")
-        .select(
-          "id, name, kcal_100, prot_100, carb_100, fat_100, default_portion_g"
-        )
+        .select("id, name, kcal_100, prot_100, carb_100, fat_100, default_portion_g")
         .in("name", names);
 
+      if (eFoods) {
+        setMsg("Error foods_base: " + eFoods.message);
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+
       const foodMap: Record<string, FoodBase> = {};
-      (foods ?? []).forEach((f) => (foodMap[f.name] = f as FoodBase));
+      (foods ?? []).forEach((f: any) => (foodMap[f.name] = f as FoodBase));
 
       const initialRows: IngredientRow[] = candidates.map((c) => {
         const food = foodMap[c.foodName] ?? null;
@@ -171,10 +177,7 @@ function RecetasInner() {
         };
       });
 
-      setNotFound(
-        initialRows.filter((r) => !r.food).map((r) => r.foodName)
-      );
-
+      setNotFound(initialRows.filter((r) => !r.food).map((r) => r.foodName));
       setRows(initialRows);
       setLoading(false);
     })();
@@ -210,22 +213,31 @@ function RecetasInner() {
   return (
     <div className="stack">
       <div className="card">
-        <h1 className="h1">Recetas · Calculadora de macros</h1>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <h1 className="h1" style={{ margin: 0 }}>Recetas · Calculadora de macros</h1>
 
-        <select
-          className="input"
-          value={selectedPlatoId}
-          onChange={(e) => setSelectedPlatoId(e.target.value)}
-        >
-          <option value="">— Seleccionar receta —</option>
-          {platos.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.plato}
-            </option>
-          ))}
-        </select>
+          <Link className="btn primary" href="/recetas/nueva">
+            + Nueva receta
+          </Link>
+        </div>
 
-        {msg && <div className="small">{msg}</div>}
+        <div style={{ marginTop: 12 }}>
+          <select
+            className="input"
+            value={selectedPlatoId}
+            onChange={(e) => setSelectedPlatoId(e.target.value)}
+          >
+            <option value="">— Seleccionar receta —</option>
+            {platos.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.plato}
+              </option>
+            ))}
+          </select>
+
+          {loading && <div className="small" style={{ marginTop: 8 }}>Cargando…</div>}
+          {msg && <div className="small" style={{ marginTop: 8 }}>{msg}</div>}
+        </div>
       </div>
 
       {rows.length > 0 && (
@@ -236,6 +248,12 @@ function RecetasInner() {
             <span className="badge">C {r1(calc.total.carb)} g</span>
             <span className="badge">G {r1(calc.total.fat)} g</span>
           </div>
+
+          {notFound.length > 0 && (
+            <div className="small color-danger" style={{ marginTop: 10 }}>
+              No encontrados en foods_base (deben coincidir exacto): {notFound.join(", ")}
+            </div>
+          )}
 
           {calc.line.map((r) => (
             <div key={r.slot} className="row" style={{ marginTop: 8 }}>
@@ -253,9 +271,7 @@ function RecetasInner() {
                   )
                 }
               />
-              <div className="small muted">
-                {r1(r.kcal)} kcal
-              </div>
+              <div className="small muted">{r1((r.food ? (n(r.grams) * r.food.kcal_100) / 100 : 0))} kcal</div>
             </div>
           ))}
         </div>
@@ -263,4 +279,3 @@ function RecetasInner() {
     </div>
   );
 }
-
