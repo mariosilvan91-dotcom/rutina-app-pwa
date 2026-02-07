@@ -8,7 +8,7 @@ interface Plato { id: string; plato: string; comida: string; }
 interface Alimento { 
   id: string; 
   Alimento: string; 
-  "Ración_normal_g": number | null; 
+  "Ración_normal_g": number | null; // Nombre exacto de tu tabla
 }
 interface Item { plato_item_id: string; alimento: string; grams: number; kcal: number; }
 
@@ -17,7 +17,7 @@ export default function EditorPlatos() {
   const [foods, setFoods] = useState<Alimento[]>([]);
   const [selectedPlato, setSelectedPlato] = useState<string>("");
   const [selectedFood, setSelectedFood] = useState<string>("");
-  const [grams, setGrams] = useState<number>(100); // Valor por defecto inicial
+  const [grams, setGrams] = useState<number>(100);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -27,7 +27,8 @@ export default function EditorPlatos() {
 
   async function fetchInitialData() {
     const { data: p } = await supabase.from("stg_platos").select("*").order("plato");
-    const { data: f } = await supabase.from("stg_foods").select("*").order("Alimento");
+    // Traemos explícitamente la columna de la ración
+    const { data: f } = await supabase.from("stg_foods").select('id, Alimento, Ración_normal_g').order("Alimento");
     if (p) setPlatos(p);
     if (f) setFoods(f);
   }
@@ -41,22 +42,19 @@ export default function EditorPlatos() {
     setItems(data || []);
   }
 
-  // --- LA FUNCIÓN CLAVE ---
-  const handleFoodSelection = (foodId: string) => {
-    setSelectedFood(foodId);
+  // --- ESTA ES LA FUNCIÓN QUE HACE LA MAGIA ---
+  const handleAlimentoChange = (id: string) => {
+    setSelectedFood(id);
     
-    // Buscamos el alimento dentro de nuestro estado 'foods'
-    const foodFound = foods.find(f => String(f.id) === String(foodId));
+    // Buscamos el alimento seleccionado en nuestro array de foods
+    const alimentoEncontrado = foods.find(f => f.id === id);
     
-    if (foodFound) {
-      // Usamos la sintaxis de corchetes por la tilde en la columna
-      const racionSugerida = foodFound["Ración_normal_g"];
-      
-      if (racionSugerida && racionSugerida > 0) {
-        setGrams(Number(racionSugerida));
-      } else {
-        setGrams(100); // Si no hay ración definida, volvemos a 100
-      }
+    if (alimentoEncontrado && alimentoEncontrado.Ración_normal_g) {
+      // Si tiene ración definida, actualizamos el input de gramos automáticamente
+      setGrams(alimentoEncontrado.Ración_normal_g);
+    } else {
+      // Si no tiene (o es el valor por defecto), podemos dejarlo en 100 o 0
+      setGrams(100);
     }
   };
 
@@ -70,7 +68,6 @@ export default function EditorPlatos() {
       order_idx: items.length + 1
     });
     setLoading(false);
-    setSelectedFood(""); // Limpiamos para el siguiente ingrediente
     fetchItems();
   }
 
@@ -95,38 +92,33 @@ export default function EditorPlatos() {
             <label className="label">2. Añadir Alimento</label>
             <div style={{ display: "grid", gap: "10px" }}>
               
-              {/* SELECT CON TRIGGER DE AUTO-RELLENO */}
               <select 
                 className="input" 
                 value={selectedFood} 
-                onChange={e => handleFoodSelection(e.target.value)}
+                onChange={e => handleAlimentoChange(e.target.value)}
               >
                 <option value="">-- Buscar alimento --</option>
                 {foods.map(f => <option key={f.id} value={f.id}>{f.Alimento}</option>)}
               </select>
 
               <div className="row" style={{ gap: "10px" }}>
-                <div style={{ flex: 1 }}>
-                  <span className="small">Gramos (se ajusta solo):</span>
-                  <input 
-                    className="input" 
-                    type="number" 
-                    value={grams} 
-                    onChange={e => setGrams(Number(e.target.value))} 
-                  />
-                </div>
-                <button className="btn primary" onClick={addItem} disabled={loading} style={{ alignSelf: "flex-end", height: "45px" }}>
-                  Añadir
-                </button>
+                <input 
+                  className="input" 
+                  type="number" 
+                  value={grams} 
+                  onChange={e => setGrams(Number(e.target.value))} 
+                  placeholder="Gramos" 
+                />
+                <button className="btn primary" onClick={addItem} disabled={loading}>Añadir</button>
               </div>
             </div>
 
-            <h3 className="h3" style={{ marginTop: "20px" }}>Ingredientes:</h3>
+            <h3 className="h3" style={{ marginTop: "20px" }}>Ingredientes actuales:</h3>
             <div style={{ display: "grid", gap: "5px" }}>
               {items.map(it => (
                 <div key={it.plato_item_id} className="row" style={{ justifyContent: "space-between", background: "#222", padding: "10px", borderRadius: "8px" }}>
                   <span>{it.alimento} ({it.grams}g)</span>
-                  <button onClick={() => deleteItem(it.plato_item_id)} style={{ background: "none", border: "none", color: "#ff4444", fontSize: "1.2rem" }}>✕</button>
+                  <button onClick={() => deleteItem(it.plato_item_id)} style={{ background: "none", border: "none", color: "#ff4444" }}>✕</button>
                 </div>
               ))}
             </div>
