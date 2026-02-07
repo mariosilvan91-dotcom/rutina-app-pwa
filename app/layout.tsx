@@ -26,8 +26,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/editor-platos">🍳 Recetas</Link> {/* Nueva pestaña */}
             <Link href="/historia">Histórico</Link>
             <Link href="/plan-deporte">Deporte</Link>
-            <Link href="/alimentos">Alimentos</Link>
-            <Link href="/platos">Catálogo</Link>
             <Link href="/ajustes">Ajustes</Link>
             <Link href="/cuenta">Cuenta</Link>
           </div>
