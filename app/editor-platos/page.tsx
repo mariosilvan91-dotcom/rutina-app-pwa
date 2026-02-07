@@ -7,16 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 
 type StgPlatoListRow = { id: string; plato: string };
 
-type StgPlatoDetailRow = {
-  id: string;
-  plato: string;
-  ingredientes_1: string | null;
-  ingredientes_2: string | null;
-  ingredientes_3: string | null;
-  ingredientes_4: string | null;
-  ingredientes_5: string | null;
-};
-
 type FoodBase = {
   id: string;
   name: string;
@@ -79,92 +69,118 @@ function RecetasInner() {
   const [rows, setRows] = useState<IngredientRow[]>([]);
   const [notFound, setNotFound] = useState<string[]>([]);
 
-  // 🔹 Cargar lista de recetas
+  // lista de recetas
   useEffect(() => {
     (async () => {
+      setMsg("");
       const { data, error } = await supabase
         .from("stg_platos")
         .select("id, plato")
-        .order("plato");
+        .order("plato", { ascending: true });
 
       if (error) {
-        setMsg(error.message);
+        setMsg("Error cargando recetas: " + error.message);
         setPlatos([]);
-      } else {
-        const seen = new Set<string>();
-        const clean = (data ?? []).filter(
-          (x: any) => x.id && !seen.has(x.id) && seen.add(x.id)
-        );
-        setPlatos(clean as StgPlatoListRow[]);
+        return;
       }
+
+      // dedupe por id
+      const seen = new Set<string>();
+      const clean = ((data as any[]) ?? []).filter(
+        (x) => x?.id && x?.plato && !seen.has(String(x.id)) && seen.add(String(x.id))
+      );
+      setPlatos(clean as StgPlatoListRow[]);
     })();
   }, []);
 
-  // 🔹 Al seleccionar receta
+  // cargar receta + ingredientes (con fallback plural/singular)
   useEffect(() => {
     if (!selectedPlatoId) {
       setRows([]);
       setNotFound([]);
+      setMsg("");
       return;
     }
 
     (async () => {
       setLoading(true);
       setMsg("");
+      setRows([]);
       setNotFound([]);
 
-      const { data: p, error } = await supabase
+      // Intento 1: plural ingredientes_1..5
+      const selPlural =
+        "id, plato, ingredientes_1, ingredientes_2, ingredientes_3, ingredientes_4, ingredientes_5";
+      const { data: p1, error: e1 } = await supabase
         .from("stg_platos")
-        .select(
-          "id, plato, ingredientes_1, ingredientes_2, ingredientes_3, ingredientes_4, ingredientes_5"
-        )
+        .select(selPlural)
         .eq("id", selectedPlatoId)
         .maybeSingle();
 
-      if (error || !p) {
-        setMsg("Error cargando receta");
-        setRows([]);
-        setLoading(false);
-        return;
+      let platoRow: any = null;
+      let mode: "plural" | "singular" = "plural";
+
+      if (e1) {
+        // Intento 2: singular ingrediente_1..5 (por si realmente se llamaban así)
+        const selSingular =
+          "id, plato, ingrediente_1, ingrediente_2, ingrediente_3, ingrediente_4, ingrediente_5";
+        const { data: p2, error: e2 } = await supabase
+          .from("stg_platos")
+          .select(selSingular)
+          .eq("id", selectedPlatoId)
+          .maybeSingle();
+
+        if (e2 || !p2) {
+          setMsg("Error cargando receta: " + (e2?.message ?? e1.message));
+          setLoading(false);
+          return;
+        }
+
+        platoRow = p2;
+        mode = "singular";
+      } else {
+        if (!p1) {
+          setMsg("Receta no encontrada.");
+          setLoading(false);
+          return;
+        }
+        platoRow = p1;
       }
 
-      const plato = p as StgPlatoDetailRow;
-
+      // construir candidatos
       const candidates: { slot: IngredientSlotKey; label: string; foodName: string }[] = [];
-      for (const s of SLOTS) {
-        const val = (plato as any)[s.key];
-        if (val && cleanName(val)) {
-          candidates.push({
-            slot: s.key,
-            label: s.label,
-            foodName: cleanName(val),
-          });
-        }
+
+      for (let i = 1; i <= 5; i++) {
+        const label = `Ingrediente ${i}`;
+        const slot = (`ingredientes_${i}` as IngredientSlotKey);
+
+        const colName = mode === "plural" ? `ingredientes_${i}` : `ingrediente_${i}`;
+        const val = cleanName(String(platoRow[colName] ?? "")) || "";
+
+        if (val) candidates.push({ slot, label, foodName: val });
       }
 
       if (!candidates.length) {
         setMsg("La receta no tiene ingredientes.");
-        setRows([]);
         setLoading(false);
         return;
       }
 
-      const names = [...new Set(candidates.map((c) => c.foodName))];
-
-      const { data: foods, error: eFoods } = await supabase
+      // buscar foods_base por name exacto y traer default_portion_g
+      const names = Array.from(new Set(candidates.map((c) => c.foodName)));
+      const { data: foods, error: ef } = await supabase
         .from("foods_base")
         .select("id, name, kcal_100, prot_100, carb_100, fat_100, default_portion_g")
         .in("name", names);
 
-      if (eFoods) {
-        setMsg("Error foods_base: " + eFoods.message);
-        setRows([]);
+      if (ef) {
+        setMsg("Error foods_base: " + ef.message);
         setLoading(false);
         return;
       }
 
       const foodMap: Record<string, FoodBase> = {};
-      (foods ?? []).forEach((f: any) => (foodMap[f.name] = f as FoodBase));
+      (foods as any[] ?? []).forEach((f) => (foodMap[f.name] = f as FoodBase));
 
       const initialRows: IngredientRow[] = candidates.map((c) => {
         const food = foodMap[c.foodName] ?? null;
@@ -183,17 +199,16 @@ function RecetasInner() {
     })();
   }, [selectedPlatoId]);
 
-  // 🔹 Cálculo de macros
   const calc = useMemo(() => {
     const line = rows.map((r) => {
       const g = n(r.grams);
       const f = r.food;
       return {
         ...r,
-        kcal: f ? (g * f.kcal_100) / 100 : 0,
-        prot: f ? (g * f.prot_100) / 100 : 0,
-        carb: f ? (g * f.carb_100) / 100 : 0,
-        fat: f ? (g * f.fat_100) / 100 : 0,
+        kcal: f ? (g * n(f.kcal_100)) / 100 : 0,
+        prot: f ? (g * n(f.prot_100)) / 100 : 0,
+        carb: f ? (g * n(f.carb_100)) / 100 : 0,
+        fat: f ? (g * n(f.fat_100)) / 100 : 0,
       };
     });
 
@@ -271,7 +286,7 @@ function RecetasInner() {
                   )
                 }
               />
-              <div className="small muted">{r1((r.food ? (n(r.grams) * r.food.kcal_100) / 100 : 0))} kcal</div>
+              <div className="small muted">{r1(r.kcal)} kcal</div>
             </div>
           ))}
         </div>
