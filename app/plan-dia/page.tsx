@@ -20,6 +20,14 @@ type WeekDayPlan = {
   cena_plato: string | null;
 };
 
+type UserSettings = {
+  kcal_entreno: number | null;
+  kcal_descanso: number | null;
+  p_prot: number | null;   // decimal (0.3 = 30%)
+  p_carb: number | null;   // decimal (0.5 = 50%)
+  p_grasa: number | null;  // decimal (0.2 = 20%)
+};
+
 function ymd(d: Date) {
   const yy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -38,6 +46,17 @@ const DOW_ES = ["L", "M", "X", "J", "V", "S", "D"];
 function pickOne(arr: Plato[]) {
   if (!arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function calcMacroTargets(kcal: number, p_prot: number, p_carb: number, p_grasa: number) {
+  // Fórmula indicada:
+  // prot_g = (kcal * p_prot) / 4
+  // carb_g = (kcal * p_carb) / 4
+  // fat_g  = (kcal * p_grasa) / 9
+  const prot_g = (kcal * p_prot) / 4;
+  const carb_g = (kcal * p_carb) / 4;
+  const grasa_g = (kcal * p_grasa) / 9;
+  return { prot_g, carb_g, grasa_g };
 }
 
 export default function PlanDiaPage() {
@@ -82,8 +101,33 @@ function PlanSemanalInner() {
       })
   );
 
+  // ✅ NUEVO: settings para objetivos
+  const [settings, setSettings] = useState<UserSettings | null>(null);
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
+  }, []);
+
+  // ✅ NUEVO: cargar settings (kcal + % macros)
+  useEffect(() => {
+    (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      const uid = u.user?.id;
+      if (!uid) return;
+
+      const { data, error } = await supabase
+        .from("user_settings")
+        .select("kcal_entreno,kcal_descanso,p_prot,p_carb,p_grasa")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (error) {
+        setStatus((prev) => (prev ? prev + " · " : "") + "Error settings: " + error.message);
+        return;
+      }
+
+      setSettings((data as any) ?? null);
+    })();
   }, []);
 
   // Cargar platos desde stg_platos (asegúrate de que columnas están renombradas)
@@ -225,6 +269,23 @@ function PlanSemanalInner() {
     return `${a} — ${b}`;
   }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ✅ NUEVO: función para obtener objetivos según tipo_dia
+  function targetsFor(tipo_dia: "entreno" | "descanso") {
+    const kcal_entreno = settings?.kcal_entreno ?? 0;
+    const kcal_descanso = settings?.kcal_descanso ?? 0;
+    const p_prot = settings?.p_prot ?? 0;
+    const p_carb = settings?.p_carb ?? 0;
+    const p_grasa = settings?.p_grasa ?? 0;
+
+    const kcal = tipo_dia === "entreno" ? kcal_entreno : kcal_descanso;
+    if (!kcal || !p_prot || !p_carb || !p_grasa) {
+      return { kcal: 0, prot_g: 0, carb_g: 0, grasa_g: 0 };
+    }
+
+    const m = calcMacroTargets(kcal, p_prot, p_carb, p_grasa);
+    return { kcal, ...m };
+  }
+
   return (
     <div>
       <div className="card">
@@ -256,6 +317,9 @@ function PlanSemanalInner() {
             const d = weekDays[idx];
             const label = `${DOW_ES[idx]} ${d.getDate()}`;
 
+            // ✅ NUEVO: objetivos del día según entreno/descanso
+            const t = targetsFor(r.tipo_dia);
+
             return (
               <div key={r.day} className="card" style={{ padding: 12 }}>
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
@@ -276,6 +340,14 @@ function PlanSemanalInner() {
                   >
                     Descanso
                   </button>
+                </div>
+
+                {/* ✅ NUEVO: mostrar objetivos kcal + macros */}
+                <div className="small muted" style={{ marginTop: 10 }}>
+                  Obj: <b>{t.kcal ? Math.round(t.kcal) : "—"}</b> kcal ·{" "}
+                  P <b>{t.kcal ? Math.round(t.prot_g) : "—"}</b>g ·{" "}
+                  C <b>{t.kcal ? Math.round(t.carb_g) : "—"}</b>g ·{" "}
+                  G <b>{t.kcal ? Math.round(t.grasa_g) : "—"}</b>g
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 10 }}>
