@@ -145,7 +145,7 @@ function RecetasInner() {
       const names = Array.from(new Set(candidates.map((c) => c.foodName)));
 
       const { data: foods, error: ef } = await supabase
-        .from("foods_base")
+        .from("foods")
         .select(
           "id, name, kcal_100, prot_100, carb_100, fat_100, default_portion_g"
         )
