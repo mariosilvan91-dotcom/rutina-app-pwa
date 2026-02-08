@@ -11,7 +11,6 @@ type Plato = {
   comida: "desayuno" | "comida" | "merienda" | "cena";
   plato: string;
 
-  // ✅ ingredientes en columnas
   ingrediente_1: string | null;
   ingrediente_2: string | null;
   ingrediente_3: string | null;
@@ -31,18 +30,17 @@ type WeekDayPlan = {
 type UserSettings = {
   kcal_entreno: number | null;
   kcal_descanso: number | null;
-  p_prot: number | null; // decimal (0.3 = 30%)
-  p_carb: number | null; // decimal (0.5 = 50%)
-  p_grasa: number | null; // decimal (0.2 = 20%)
+  p_prot: number | null;
+  p_carb: number | null;
+  p_grasa: number | null;
 };
 
 type FoodRow = {
-  // ⚠️ CAMBIA "name" si tu columna se llama diferente (ej. "alimento", "food", "Alimento")
   name: string;
   prot_100: number | null;
   carb_100: number | null;
   fat_100: number | null;
-  ration_norm: number | null; // gramos
+  ration_norm: number | null; // ⚠️ usamos ration_norm, no default_portion_g
 };
 
 type DishMacros = {
@@ -122,15 +120,13 @@ function PlanSemanalInner() {
   );
 
   const [settings, setSettings] = useState<UserSettings | null>(null);
-
-  // ✅ NUEVO: macros calculadas por receta (plato)
   const [dishMacrosById, setDishMacrosById] = useState<Record<string, DishMacros>>({});
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
   }, []);
 
-  // cargar settings (kcal + % macros)
+  // settings (kcal + %)
   useEffect(() => {
     (async () => {
       const { data: u } = await supabase.auth.getUser();
@@ -152,7 +148,7 @@ function PlanSemanalInner() {
     })();
   }, []);
 
-  // Cargar platos desde stg_platos (ahora con ingredientes_1..5)
+  // platos
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -171,7 +167,7 @@ function PlanSemanalInner() {
     })();
   }, []);
 
-  // Cargar semana guardada
+  // semana guardada
   useEffect(() => {
     if (!userId) return;
     (async () => {
@@ -239,12 +235,6 @@ function PlanSemanalInner() {
     return m;
   }, [platos]);
 
-  const platoById = useMemo(() => {
-    const m = new Map<string, Plato>();
-    for (const p of platos) m.set(p.id, p);
-    return m;
-  }, [platos]);
-
   function setRow(idx: number, patch: Partial<WeekDayPlan>) {
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   }
@@ -280,9 +270,7 @@ function PlanSemanalInner() {
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await supabase
-      .from("week_plan_days")
-      .upsert(payload, { onConflict: "user_id,day" });
+    const { error } = await supabase.from("week_plan_days").upsert(payload, { onConflict: "user_id,day" });
 
     setLoading(false);
     setStatus(error ? error.message : "Semana guardada ✅");
@@ -317,12 +305,11 @@ function PlanSemanalInner() {
     return { kcal, ...m };
   }
 
-  // ✅ NUEVO: calcular macros de todas las recetas usando ingrediente_1..5 + foods (prot_100/carb_100/fat_100) y foods.ration_norm
+  // calcular macros recetas (por ingredientes + foods)
   useEffect(() => {
     (async () => {
       if (!platos.length) return;
 
-      // 1) ingredientes únicos usados por cualquier receta
       const ingSet = new Set<string>();
       for (const p of platos) {
         const list = [p.ingrediente_1, p.ingrediente_2, p.ingrediente_3, p.ingrediente_4, p.ingrediente_5];
@@ -337,11 +324,9 @@ function PlanSemanalInner() {
         return;
       }
 
-      // 2) cargar foods de esos ingredientes
-      // ⚠️ Si tu columna de nombre NO es "name", cámbiala aquí:
       const { data: foods, error } = await supabase
         .from("foods")
-        .select("name,prot_100,carb_100,fat_100,default_portion_g")
+        .select("name,prot_100,carb_100,fat_100,ration_norm")
         .in("name", ingredients);
 
       if (error) {
@@ -352,7 +337,6 @@ function PlanSemanalInner() {
       const foodByName = new Map<string, FoodRow>();
       (foods ?? []).forEach((f: any) => foodByName.set(String(f.name).trim(), f as FoodRow));
 
-      // 3) sumar macros por receta
       const acc: Record<string, DishMacros> = {};
 
       for (const p of platos) {
@@ -368,7 +352,7 @@ function PlanSemanalInner() {
           const f = foodByName.get(ing);
           if (!f) continue;
 
-          const grams = Number(f.ration_norm ?? 0); // gramos por defecto del ingrediente
+          const grams = Number(f.ration_norm ?? 0);
           if (!grams) continue;
 
           const factor = grams / 100.0;
@@ -414,7 +398,6 @@ function PlanSemanalInner() {
         {status ? <div className="small" style={{ marginTop: 10 }}>{status}</div> : null}
       </div>
 
-      {/* Editor semana */}
       <div className="card" style={{ marginTop: 12 }}>
         <div style={{ fontWeight: 900, marginBottom: 10 }}>Editar días</div>
 
@@ -423,11 +406,22 @@ function PlanSemanalInner() {
             const d = weekDays[idx];
             const label = `${DOW_ES[idx]} ${d.getDate()}`;
             const t = targetsFor(r.tipo_dia);
+            const isToday = r.day === todayISO;
 
             return (
-              <div key={r.day} className="card" style={{ padding: 12 }}>
+              <div
+                key={r.day}
+                className="card"
+                style={{
+                  padding: 12,
+                  border: isToday ? "2px solid rgba(59,130,246,0.9)" : "1px solid rgba(255,255,255,0.08)",
+                  boxShadow: isToday ? "0 0 0 3px rgba(59,130,246,0.15)" : undefined,
+                }}
+              >
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontWeight: 900 }}>{label}</div>
+                  <div style={{ fontWeight: 900, color: isToday ? "rgba(59,130,246,1)" : undefined }}>
+                    {label} {isToday ? "· HOY" : ""}
+                  </div>
                   <span className="badge">{r.day}</span>
                 </div>
 
@@ -562,3 +556,4 @@ function SelectPlato({
     </div>
   );
 }
+
