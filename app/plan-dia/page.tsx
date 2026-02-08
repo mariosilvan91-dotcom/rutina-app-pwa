@@ -341,7 +341,7 @@ function PlanSemanalInner() {
       // ⚠️ Si tu columna de nombre NO es "name", cámbiala aquí:
       const { data: foods, error } = await supabase
         .from("foods")
-        .select("name,prot_100,carb_100,fat_100,default_ration_g")
+        .select("name,prot_100,carb_100,fat_100,default_portion_g")
         .in("name", ingredients);
 
       if (error) {
