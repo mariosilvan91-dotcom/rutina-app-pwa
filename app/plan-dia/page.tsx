@@ -406,7 +406,8 @@ function PlanSemanalInner() {
             const d = weekDays[idx];
             const label = `${DOW_ES[idx]} ${d.getDate()}`;
             const t = targetsFor(r.tipo_dia);
-            const isToday = r.day === todayISO;
+            const isToday = r.day === todayISO();
+
 
             return (
               <div
