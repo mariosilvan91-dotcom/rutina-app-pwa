@@ -212,7 +212,7 @@ function FoodAutocomplete({
 
       // Filtrado rápido por foods_base
       const { data, error } = await supabase
-        .from("foods_base")
+        .from("foods")
         .select("id, name, default_portion_g")
         .ilike("name", `%${q}%`)
         .order("name", { ascending: true })
