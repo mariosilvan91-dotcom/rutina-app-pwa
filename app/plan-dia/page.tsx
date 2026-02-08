@@ -6,9 +6,17 @@ import { supabase } from "@/lib/supabaseClient";
 import { todayISO } from "@/lib/date";
 
 type Plato = {
+  id: string;
   tipo_dia: "entreno" | "descanso";
   comida: "desayuno" | "comida" | "merienda" | "cena";
   plato: string;
+
+  // ✅ ingredientes en columnas
+  ingrediente_1: string | null;
+  ingrediente_2: string | null;
+  ingrediente_3: string | null;
+  ingrediente_4: string | null;
+  ingrediente_5: string | null;
 };
 
 type WeekDayPlan = {
@@ -23,9 +31,25 @@ type WeekDayPlan = {
 type UserSettings = {
   kcal_entreno: number | null;
   kcal_descanso: number | null;
-  p_prot: number | null;   // decimal (0.3 = 30%)
-  p_carb: number | null;   // decimal (0.5 = 50%)
-  p_grasa: number | null;  // decimal (0.2 = 20%)
+  p_prot: number | null; // decimal (0.3 = 30%)
+  p_carb: number | null; // decimal (0.5 = 50%)
+  p_grasa: number | null; // decimal (0.2 = 20%)
+};
+
+type FoodRow = {
+  // ⚠️ CAMBIA "name" si tu columna se llama diferente (ej. "alimento", "food", "Alimento")
+  name: string;
+  prot_100: number | null;
+  carb_100: number | null;
+  fat_100: number | null;
+  ration_norm: number | null; // gramos
+};
+
+type DishMacros = {
+  kcal: number;
+  prot: number;
+  carb: number;
+  fat: number;
 };
 
 function ymd(d: Date) {
@@ -49,10 +73,6 @@ function pickOne(arr: Plato[]) {
 }
 
 function calcMacroTargets(kcal: number, p_prot: number, p_carb: number, p_grasa: number) {
-  // Fórmula indicada:
-  // prot_g = (kcal * p_prot) / 4
-  // carb_g = (kcal * p_carb) / 4
-  // fat_g  = (kcal * p_grasa) / 9
   const prot_g = (kcal * p_prot) / 4;
   const carb_g = (kcal * p_carb) / 4;
   const grasa_g = (kcal * p_grasa) / 9;
@@ -101,14 +121,16 @@ function PlanSemanalInner() {
       })
   );
 
-  // ✅ NUEVO: settings para objetivos
   const [settings, setSettings] = useState<UserSettings | null>(null);
+
+  // ✅ NUEVO: macros calculadas por receta (plato)
+  const [dishMacrosById, setDishMacrosById] = useState<Record<string, DishMacros>>({});
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? ""));
   }, []);
 
-  // ✅ NUEVO: cargar settings (kcal + % macros)
+  // cargar settings (kcal + % macros)
   useEffect(() => {
     (async () => {
       const { data: u } = await supabase.auth.getUser();
@@ -130,14 +152,14 @@ function PlanSemanalInner() {
     })();
   }, []);
 
-  // Cargar platos desde stg_platos (asegúrate de que columnas están renombradas)
+  // Cargar platos desde stg_platos (ahora con ingredientes_1..5)
   useEffect(() => {
     (async () => {
       setLoading(true);
       setStatus("");
       const { data, error } = await supabase
         .from("stg_platos")
-        .select("tipo_dia,comida,plato");
+        .select("id,tipo_dia,comida,plato,ingrediente_1,ingrediente_2,ingrediente_3,ingrediente_4,ingrediente_5");
 
       if (error) {
         setStatus(error.message);
@@ -173,7 +195,6 @@ function PlanSemanalInner() {
         return;
       }
 
-      // Base week template
       const base: WeekDayPlan[] = weekDays.map((d) => ({
         day: ymd(d),
         tipo_dia: "entreno",
@@ -183,7 +204,6 @@ function PlanSemanalInner() {
         cena_plato: null,
       }));
 
-      // Merge saved rows
       const map = new Map<string, any>();
       (data ?? []).forEach((r: any) => map.set(String(r.day), r));
 
@@ -209,6 +229,20 @@ function PlanSemanalInner() {
     const by = (tipo: "entreno" | "descanso", comida: Plato["comida"]) =>
       platos.filter((p) => p.tipo_dia === tipo && p.comida === comida);
     return { by };
+  }, [platos]);
+
+  const platoIdByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of platos) {
+      if (!m.has(p.plato)) m.set(p.plato, p.id);
+    }
+    return m;
+  }, [platos]);
+
+  const platoById = useMemo(() => {
+    const m = new Map<string, Plato>();
+    for (const p of platos) m.set(p.id, p);
+    return m;
   }, [platos]);
 
   function setRow(idx: number, patch: Partial<WeekDayPlan>) {
@@ -269,7 +303,6 @@ function PlanSemanalInner() {
     return `${a} — ${b}`;
   }, [weekStartISO]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ✅ NUEVO: función para obtener objetivos según tipo_dia
   function targetsFor(tipo_dia: "entreno" | "descanso") {
     const kcal_entreno = settings?.kcal_entreno ?? 0;
     const kcal_descanso = settings?.kcal_descanso ?? 0;
@@ -278,12 +311,85 @@ function PlanSemanalInner() {
     const p_grasa = settings?.p_grasa ?? 0;
 
     const kcal = tipo_dia === "entreno" ? kcal_entreno : kcal_descanso;
-    if (!kcal || !p_prot || !p_carb || !p_grasa) {
-      return { kcal: 0, prot_g: 0, carb_g: 0, grasa_g: 0 };
-    }
+    if (!kcal || !p_prot || !p_carb || !p_grasa) return { kcal: 0, prot_g: 0, carb_g: 0, grasa_g: 0 };
 
     const m = calcMacroTargets(kcal, p_prot, p_carb, p_grasa);
     return { kcal, ...m };
+  }
+
+  // ✅ NUEVO: calcular macros de todas las recetas usando ingrediente_1..5 + foods (prot_100/carb_100/fat_100) y foods.ration_norm
+  useEffect(() => {
+    (async () => {
+      if (!platos.length) return;
+
+      // 1) ingredientes únicos usados por cualquier receta
+      const ingSet = new Set<string>();
+      for (const p of platos) {
+        const list = [p.ingrediente_1, p.ingrediente_2, p.ingrediente_3, p.ingrediente_4, p.ingrediente_5];
+        list.forEach((x) => {
+          const v = (x ?? "").trim();
+          if (v) ingSet.add(v);
+        });
+      }
+      const ingredients = Array.from(ingSet);
+      if (!ingredients.length) {
+        setDishMacrosById({});
+        return;
+      }
+
+      // 2) cargar foods de esos ingredientes
+      // ⚠️ Si tu columna de nombre NO es "name", cámbiala aquí:
+      const { data: foods, error } = await supabase
+        .from("foods")
+        .select("name,prot_100,carb_100,fat_100,ration_norm")
+        .in("name", ingredients);
+
+      if (error) {
+        setStatus((prev) => (prev ? prev + " · " : "") + "Error foods: " + error.message);
+        return;
+      }
+
+      const foodByName = new Map<string, FoodRow>();
+      (foods ?? []).forEach((f: any) => foodByName.set(String(f.name).trim(), f as FoodRow));
+
+      // 3) sumar macros por receta
+      const acc: Record<string, DishMacros> = {};
+
+      for (const p of platos) {
+        let prot = 0;
+        let carb = 0;
+        let fat = 0;
+
+        const list = [p.ingrediente_1, p.ingrediente_2, p.ingrediente_3, p.ingrediente_4, p.ingrediente_5]
+          .map((x) => (x ?? "").trim())
+          .filter(Boolean);
+
+        for (const ing of list) {
+          const f = foodByName.get(ing);
+          if (!f) continue;
+
+          const grams = Number(f.ration_norm ?? 0); // gramos por defecto del ingrediente
+          if (!grams) continue;
+
+          const factor = grams / 100.0;
+          prot += factor * Number(f.prot_100 ?? 0);
+          carb += factor * Number(f.carb_100 ?? 0);
+          fat += factor * Number(f.fat_100 ?? 0);
+        }
+
+        const kcal = prot * 4 + carb * 4 + fat * 9;
+        acc[p.id] = { kcal, prot, carb, fat };
+      }
+
+      setDishMacrosById(acc);
+    })();
+  }, [platos]);
+
+  function dishMacrosForName(platoName: string | null): DishMacros | null {
+    if (!platoName) return null;
+    const id = platoIdByName.get(platoName);
+    if (!id) return null;
+    return dishMacrosById[id] ?? null;
   }
 
   return (
@@ -316,8 +422,6 @@ function PlanSemanalInner() {
           {rows.map((r, idx) => {
             const d = weekDays[idx];
             const label = `${DOW_ES[idx]} ${d.getDate()}`;
-
-            // ✅ NUEVO: objetivos del día según entreno/descanso
             const t = targetsFor(r.tipo_dia);
 
             return (
@@ -342,39 +446,87 @@ function PlanSemanalInner() {
                   </button>
                 </div>
 
-                {/* ✅ NUEVO: mostrar objetivos kcal + macros */}
                 <div className="small muted" style={{ marginTop: 10 }}>
-                  Obj: <b>{t.kcal ? Math.round(t.kcal) : "—"}</b> kcal ·{" "}
-                  P <b>{t.kcal ? Math.round(t.prot_g) : "—"}</b>g ·{" "}
-                  C <b>{t.kcal ? Math.round(t.carb_g) : "—"}</b>g ·{" "}
-                  G <b>{t.kcal ? Math.round(t.grasa_g) : "—"}</b>g
+                  Obj: <b>{t.kcal ? Math.round(t.kcal) : "—"}</b> kcal · P <b>{t.kcal ? Math.round(t.prot_g) : "—"}</b>g · C{" "}
+                  <b>{t.kcal ? Math.round(t.carb_g) : "—"}</b>g · G <b>{t.kcal ? Math.round(t.grasa_g) : "—"}</b>g
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 10 }}>
-                  <SelectPlato
-                    label="Desayuno"
-                    value={r.desayuno_plato}
-                    onChange={(v) => setRow(idx, { desayuno_plato: v })}
-                    platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
-                  />
-                  <SelectPlato
-                    label="Comida"
-                    value={r.comida_plato}
-                    onChange={(v) => setRow(idx, { comida_plato: v })}
-                    platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
-                  />
-                  <SelectPlato
-                    label="Merienda"
-                    value={r.merienda_plato}
-                    onChange={(v) => setRow(idx, { merienda_plato: v })}
-                    platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
-                  />
-                  <SelectPlato
-                    label="Cena"
-                    value={r.cena_plato}
-                    onChange={(v) => setRow(idx, { cena_plato: v })}
-                    platos={options.by(r.tipo_dia, "cena").map((p) => p.plato)}
-                  />
+                  <div>
+                    <SelectPlato
+                      label="Desayuno"
+                      value={r.desayuno_plato}
+                      onChange={(v) => setRow(idx, { desayuno_plato: v })}
+                      platos={options.by(r.tipo_dia, "desayuno").map((p) => p.plato)}
+                    />
+                    {(() => {
+                      const m = dishMacrosForName(r.desayuno_plato);
+                      if (!m) return null;
+                      return (
+                        <div className="small muted" style={{ marginTop: 6 }}>
+                          Receta: <b>{Math.round(m.kcal)}</b> kcal · P <b>{Math.round(m.prot)}</b> · C{" "}
+                          <b>{Math.round(m.carb)}</b> · G <b>{Math.round(m.fat)}</b>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div>
+                    <SelectPlato
+                      label="Comida"
+                      value={r.comida_plato}
+                      onChange={(v) => setRow(idx, { comida_plato: v })}
+                      platos={options.by(r.tipo_dia, "comida").map((p) => p.plato)}
+                    />
+                    {(() => {
+                      const m = dishMacrosForName(r.comida_plato);
+                      if (!m) return null;
+                      return (
+                        <div className="small muted" style={{ marginTop: 6 }}>
+                          Receta: <b>{Math.round(m.kcal)}</b> kcal · P <b>{Math.round(m.prot)}</b> · C{" "}
+                          <b>{Math.round(m.carb)}</b> · G <b>{Math.round(m.fat)}</b>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div>
+                    <SelectPlato
+                      label="Merienda"
+                      value={r.merienda_plato}
+                      onChange={(v) => setRow(idx, { merienda_plato: v })}
+                      platos={options.by(r.tipo_dia, "merienda").map((p) => p.plato)}
+                    />
+                    {(() => {
+                      const m = dishMacrosForName(r.merienda_plato);
+                      if (!m) return null;
+                      return (
+                        <div className="small muted" style={{ marginTop: 6 }}>
+                          Receta: <b>{Math.round(m.kcal)}</b> kcal · P <b>{Math.round(m.prot)}</b> · C{" "}
+                          <b>{Math.round(m.carb)}</b> · G <b>{Math.round(m.fat)}</b>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div>
+                    <SelectPlato
+                      label="Cena"
+                      value={r.cena_plato}
+                      onChange={(v) => setRow(idx, { cena_plato: v })}
+                      platos={options.by(r.tipo_dia, "cena").map((p) => p.plato)}
+                    />
+                    {(() => {
+                      const m = dishMacrosForName(r.cena_plato);
+                      if (!m) return null;
+                      return (
+                        <div className="small muted" style={{ marginTop: 6 }}>
+                          Receta: <b>{Math.round(m.kcal)}</b> kcal · P <b>{Math.round(m.prot)}</b> · C{" "}
+                          <b>{Math.round(m.carb)}</b> · G <b>{Math.round(m.fat)}</b>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
             );
